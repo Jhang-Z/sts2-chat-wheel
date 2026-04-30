@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{CA60682D-FAD5-4F7C-8D5A-B44B216D169B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoiceRoulette", "src\VoiceRoulette\VoiceRoulette.csproj", "{4250BE7D-866F-49E4-8858-11DCB3B4D86F}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{AB8357CA-BB60-4D88-95E1-FE9FFBA8BAEB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoiceRoulette.Tests", "tests\VoiceRoulette.Tests\VoiceRoulette.Tests.csproj", "{3D38092E-42AE-4872-8DFA-8852D533B109}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4250BE7D-866F-49E4-8858-11DCB3B4D86F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4250BE7D-866F-49E4-8858-11DCB3B4D86F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4250BE7D-866F-49E4-8858-11DCB3B4D86F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4250BE7D-866F-49E4-8858-11DCB3B4D86F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3D38092E-42AE-4872-8DFA-8852D533B109}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3D38092E-42AE-4872-8DFA-8852D533B109}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3D38092E-42AE-4872-8DFA-8852D533B109}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3D38092E-42AE-4872-8DFA-8852D533B109}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{4250BE7D-866F-49E4-8858-11DCB3B4D86F} = {CA60682D-FAD5-4F7C-8D5A-B44B216D169B}
+		{3D38092E-42AE-4872-8DFA-8852D533B109} = {AB8357CA-BB60-4D88-95E1-FE9FFBA8BAEB}
+	EndGlobalSection
+EndGlobal
