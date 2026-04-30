@@ -23,4 +23,10 @@
     <ProjectReference Include="..\..\src\VoiceRoulette\VoiceRoulette.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="TTS/Fixtures/*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
