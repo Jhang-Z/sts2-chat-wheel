@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.Collections.Generic;
 using VoiceRoulette.UI;
 
 namespace VoiceRoulette.Input;
@@ -8,15 +9,17 @@ public sealed partial class InputCapture : Node
 {
     private readonly Key _hotkey;
     private readonly WheelUI _wheel;
+    private readonly Func<IList<string>> _getLineTexts;
     private bool _held;
     private Vector2 _origin;
 
     public event Action<int>? Released; // sector idx, or -1 if cancelled
 
-    public InputCapture(Key hotkey, WheelUI wheel)
+    public InputCapture(Key hotkey, WheelUI wheel, Func<IList<string>>? getLineTexts = null)
     {
         _hotkey = hotkey;
         _wheel = wheel;
+        _getLineTexts = getLineTexts ?? (() => Array.Empty<string>());
     }
 
     public override void _UnhandledInput(InputEvent ev)
@@ -27,7 +30,7 @@ public sealed partial class InputCapture : Node
             {
                 _held = true;
                 _origin = GetViewport().GetMousePosition();
-                _wheel.OpenWheel(GetCurrentLineTexts());
+                _wheel.OpenWheel(_getLineTexts());
             }
             else if (!k.Pressed && _held)
             {
@@ -42,12 +45,9 @@ public sealed partial class InputCapture : Node
             Released?.Invoke(-1);
             _wheel.CloseWheel();
         }
-        else if (ev is InputEventMouseMotion mm && _held)
+        else if (ev is InputEventMouseMotion && _held)
         {
             _wheel.SetSelectedFromMouse(GetViewport().GetMousePosition() - _origin);
         }
     }
-
-    // Replaced by binding to LineRegistry in Plugin.cs wiring (Task 15).
-    private string[] GetCurrentLineTexts() => Array.Empty<string>();
 }
