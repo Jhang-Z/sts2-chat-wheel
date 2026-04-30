@@ -92,12 +92,13 @@ Provide a Dota 2-style radial chat wheel for STS2's 4-player co-op, where select
   {
     "hotkey": "V",
     "doubao": { "apiKey": "", "endpoint": "wss://ai-gateway.vei.volces.com/v1/realtime?model=doubao-tts" },
+    "defaultVoice": "zh_female_kailangjiejie_moon_bigtts",
     "voiceMap": {
-      "ironclad": "zh_male_xiongdi_moon_bigtts",
-      "silent":   "zh_female_kailangjiejie_moon_bigtts",
-      "regent":   "...",
-      "necrobinder": "...",
-      "defect":   "..."
+      "ironclad":    "$default",
+      "silent":      "$default",
+      "regent":      "$default",
+      "necrobinder": "$default",
+      "defect":      "$default"
     },
     "pages": {
       "common":    [ {"text": "好牌！", "id": "good_card"}, ... 8 entries ],
@@ -157,7 +158,7 @@ local press V ──► WheelUI.Show
 local release at sector 3
    │
    ▼
-LineRegistry.Resolve → Line{text:"打精英怪", voice:"zh_male_xiongdi"}
+LineRegistry.Resolve → Line{text:"打精英怪", voice:"$default"}
    │
    ▼
 Dispatcher (cooldown ok)
@@ -236,6 +237,7 @@ VoiceRoulette/
 
 ## 11. Out-of-Scope (future)
 
+- Per-character voice differentiation (v1 uses one default Doubao voice for all 5 characters; `voiceMap` schema is in place to enable this later without migration)
 - AI-driven contextual lines ("low HP! help!" auto-triggered)
 - Per-card / per-relic reaction lines
 - Local mic→STT→TTS for actual voice input
