@@ -1,11 +1,11 @@
-// CONFIRMED mod entry-point (from binary analysis of sts2.dll, 2026-05-01):
+// CONFIRMED mod entry-point (from binary probe of sts2.dll, 2026-05-01):
 //
-// ModInitializerAttribute exists in MegaCrit.Sts2.Core.Modding namespace.
-// ModManager.CallModInitializer scans loaded mod assemblies for static methods
-// decorated with [ModInitializer] and invokes them during mod loading.
+// MegaCrit.Sts2.Core.Modding.ModInitializerAttribute(string initializerMethod) exists
+// and is accessible. ModManager.CallModInitializer reflects on loaded assemblies,
+// finds classes decorated with [ModInitializer("MethodName")], and invokes the named
+// static method. The attribute is applied to the class, not the method.
 //
-// Usage: apply [ModInitializer] to a public static void method (no parameters).
-// ModManager discovers it by reflection — no interface or base class required.
+// Usage: [ModInitializer("Initialize")] on the class; Initialize() must be public static void.
 //
 // UNCONFIRMED gaps (v0.1 stubs):
 // - localSlot: no confirmed API for local-player slot index via RunManager.
@@ -29,6 +29,7 @@ using VoiceRoulette.UI;
 
 namespace VoiceRoulette;
 
+[MegaCrit.Sts2.Core.Modding.ModInitializer("Initialize")]
 public static class Plugin
 {
     public const string Id = "voice_roulette";
@@ -36,8 +37,8 @@ public static class Plugin
 
     private static readonly string ModDir = ResolveModDir();
 
-    // [ModInitializer] — called by MegaCrit.Sts2.Core.Modding.ModManager.CallModInitializer
-    // when the mod assembly is loaded. Must be public static void with no parameters.
+    // Called by ModManager.CallModInitializer — registered via [ModInitializer("Initialize")]
+    // on the Plugin class (see attribute above). Must be public static void.
     public static void Initialize()
     {
         try
