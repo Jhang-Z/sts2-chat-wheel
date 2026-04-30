@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace VoiceRoulette.TTS;
 
-public sealed class DoubaoClient : IAsyncDisposable
+public sealed class DoubaoClient : IAsyncDisposable, ITTSBackend
 {
     private readonly Uri _endpoint;
     private readonly string _apiKey;
