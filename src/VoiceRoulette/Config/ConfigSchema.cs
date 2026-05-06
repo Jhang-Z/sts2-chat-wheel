@@ -5,6 +5,7 @@ namespace VoiceRoulette.Config;
 public sealed class ConfigSchema
 {
     public string Hotkey { get; set; } = "V";
+    public string SettingsHotkey { get; set; } = "Semicolon";
     public DoubaoConfig Doubao { get; set; } = new();
     public string DefaultVoice { get; set; } = "zh_female_kailangjiejie_moon_bigtts";
     public Dictionary<string, string> VoiceMap { get; set; } = new()
@@ -29,8 +30,8 @@ public sealed class DoubaoConfig
 
 public sealed class CooldownConfig
 {
-    public double PerSend { get; set; } = 1.5;
-    public int WindowMax { get; set; } = 5;
+    public double PerSend { get; set; } = 0.5;
+    public int WindowMax { get; set; } = 30;
 }
 
 public sealed class AudioConfig

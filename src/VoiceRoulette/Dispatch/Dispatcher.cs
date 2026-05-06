@@ -23,8 +23,16 @@ public sealed class Dispatcher
 
     public void Send(Line line)
     {
-        if (string.IsNullOrEmpty(line.Text)) return;
-        if (!_cooldown.TryRecord(_localSlot, _clock.NowSeconds())) return;
+        if (string.IsNullOrEmpty(line.Text))
+        {
+            Godot.GD.Print($"[VR][Dispatch] skipped (empty text)");
+            return;
+        }
+        if (!_cooldown.TryRecord(_localSlot, _clock.NowSeconds()))
+        {
+            Godot.GD.Print($"[VR][Dispatch] BLOCKED by cooldown: '{line.Text}'");
+            return;
+        }
 
         var msg = new WireMessage(
             WireMessage.CurrentVersion, _localSlot, line.Text, line.Voice,

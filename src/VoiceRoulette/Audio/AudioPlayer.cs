@@ -34,17 +34,52 @@ public sealed partial class AudioPlayer : Node, IAudioOutput
 
     public void Play(byte senderSlot, string text, string voice)
     {
-        _ = PlayAsync(senderSlot, text, voice);
+        GD.Print($"[VR][Audio] Play called: slot={senderSlot}, text='{text}', voice='{voice}', isInTree={IsInsideTree()}");
+        _ = PlayAsync(senderSlot, text, voice).ContinueWith(t =>
+        {
+            if (t.IsFaulted)
+                GD.PrintErr($"[VR][Audio] PlayAsync faulted: {t.Exception}");
+        }, System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private async Task PlayAsync(byte senderSlot, string text, string voice)
     {
-        var path = await _tts.SynthesizeToFileAsync(text, voice);
-        if (path == null) return;
+        if (_slots.Length == 0)
+        {
+            GD.PrintErr("[VR][Audio] no slots available");
+            return;
+        }
 
-        var stream = new AudioStreamMP3 { Data = File.ReadAllBytes(path) };
-        var player = _slots[senderSlot % _slots.Length];
-        player.Stream = stream;
-        player.Play();
+        string? path;
+        try
+        {
+            path = await _tts.SynthesizeToFileAsync(text, voice);
+        }
+        catch (System.Exception ex)
+        {
+            GD.PrintErr($"[VR][Audio] TTS failed for '{text}': {ex.Message}");
+            return;
+        }
+
+        if (path == null)
+        {
+            GD.PrintErr($"[VR][Audio] TTS returned null path for '{text}'");
+            return;
+        }
+
+        GD.Print($"[VR][Audio] resolved path={path}, exists={File.Exists(path)}, size={(File.Exists(path) ? new FileInfo(path).Length : 0)}");
+
+        try
+        {
+            var stream = new AudioStreamMP3 { Data = File.ReadAllBytes(path) };
+            var player = _slots[senderSlot % _slots.Length];
+            player.Stream = stream;
+            player.Play();
+            GD.Print($"[VR][Audio] player.Play() called. bus={player.Bus}, playing={player.Playing}, vol_db={player.VolumeDb}");
+        }
+        catch (System.Exception ex)
+        {
+            GD.PrintErr($"[VR][Audio] playback failed: {ex}");
+        }
     }
 }

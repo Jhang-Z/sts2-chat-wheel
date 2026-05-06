@@ -32,7 +32,7 @@ namespace VoiceRoulette;
 [MegaCrit.Sts2.Core.Modding.ModInitializer("Initialize")]
 public static class Plugin
 {
-    public const string Id = "voice_roulette";
+    public const string Id = "sts2_chat_wheel";
     public const string Version = "0.1.0";
 
     private static readonly string ModDir = ResolveModDir();
@@ -43,17 +43,29 @@ public static class Plugin
     {
         try
         {
-            var sceneRoot = ((SceneTree)Engine.GetMainLoop()).Root;
+            GD.Print($"[VR] Initialize start. ModDir={ModDir}");
 
-            var configPath = Path.Combine(ModDir, "config.json");
+            var sceneRoot = ((SceneTree)Engine.GetMainLoop()).Root;
+            GD.Print($"[VR] sceneRoot resolved: {sceneRoot?.GetType().Name ?? "null"}");
+
+            var dataDir = Path.Combine(ModDir, "data");
+            Directory.CreateDirectory(dataDir);
+            // .jsonc extension avoids the game's mod-manifest scanner (.json only).
+            var configPath = Path.Combine(dataDir, "config.jsonc");
             var config = ConfigStore.Load(configPath);
-            config.Save(); // write defaults if file was missing
+            config.Save();
+            GD.Print($"[VR] config loaded from {configPath}");
 
             var registry = new LineRegistry(config.Schema);
 
             var cacheDir = Path.Combine(ModDir, "cache");
             const long CacheMaxBytes = 100 * 1024 * 1024;
             var cache = new AudioCache(cacheDir, CacheMaxBytes);
+            var seedDir = Path.Combine(ModDir, "prerendered");
+            cache.SeedFrom(seedDir);
+            var seededCount = Directory.Exists(cacheDir)
+                ? Directory.GetFiles(cacheDir, "*.mp3").Length : 0;
+            GD.Print($"[VR] cache dir={cacheDir}, seed dir={seedDir} (exists={Directory.Exists(seedDir)}), files in cache={seededCount}");
 
             var doubao = new DoubaoClient(
                 config.Schema.Doubao.Endpoint,
@@ -61,15 +73,13 @@ public static class Plugin
             var tts = new TTSPipeline(doubao, cache);
 
             var wheel = new WheelUI();
-            sceneRoot.AddChild(wheel);
-
             var audio = new AudioPlayer(tts);
-            sceneRoot.AddChild(audio);
-
-            // Prefer real STS2 net bus; fall back to local loopback for singleplayer.
+            var bubble = new BubbleOverlay();
+            var settings = new SettingsScreen();
+            var pinger = new VoiceRoulette.Input.StatusPinger();
             INetSync net = Sts2BusNetSync.TryCreate() ?? (INetSync)new LocalNetSync();
+            GD.Print($"[VR] NetSync = {net.GetType().Name}");
 
-            // v0.1 stubs: localSlot and character not derivable without confirmed API.
             const byte LocalSlot = 0;
             const string Character = "ironclad";
 
@@ -78,24 +88,95 @@ public static class Plugin
                 new Cooldown(config.Schema.Cooldown.PerSend, config.Schema.Cooldown.WindowMax),
                 net, audio, new GodotClock());
 
+            var wheelKey = ParseKey(config.Schema.Hotkey, Key.V);
+            var settingsKey = ParseKey(config.Schema.SettingsHotkey, Key.Semicolon);
+            GD.Print($"[VR] hotkeys: wheel={wheelKey}, settings={settingsKey}");
+
             var input = new InputCapture(
-                Key.V, wheel,
-                getLineTexts: () => CurrentPageTexts(registry, Character));
-            sceneRoot.AddChild(input);
+                wheelKey, wheel,
+                getLineTexts: () => CurrentPageTexts(registry, Character),
+                settingsHotkey: settingsKey);
 
             input.Released += idx =>
             {
+                GD.Print($"[VR] Wheel released, sector={idx}");
                 if (idx < 0) return;
                 var pageSize = config.Schema.Pages.Common.Count;
                 if (idx >= pageSize) return;
                 var line = registry.Resolve(WheelPage.Common, idx, Character);
+                GD.Print($"[VR] Dispatching line: text='{line.Text}' voice='{line.Voice}'");
                 dispatcher.Send(line);
+                // Show local bubble even when audio plays back: instant feedback.
+                bubble.Show(line.Text, LocalSlot);
             };
+
+            // Show bubble for remote players too.
+            net.LineReceived += msg =>
+            {
+                if (msg.Sender == LocalSlot) return;
+                bubble.Show(msg.Text, msg.Sender);
+            };
+
+            // F2 toggles the settings screen.
+            input.SettingsToggled += () => settings.Toggle();
+
+            // Cmd/Ctrl+Click on a potion/power broadcasts a status ping.
+            // Goes through dispatcher (cooldown applied) so it shares pacing with voice wheel.
+            Action<string> sendPing = text =>
+            {
+                var line = new Lines.Line("status_ping", text, config.Schema.DefaultVoice);
+                dispatcher.Send(line);
+                bubble.Show(text, LocalSlot);
+            };
+
+            // Defer node attachment to the first idle frame: at mod-load time
+            // root Window is mid-setup and rejects AddChild. We connect once,
+            // attach our nodes, then disconnect to avoid re-running.
+            var tree = (SceneTree)Engine.GetMainLoop();
+            Action? attach = null;
+            attach = () =>
+            {
+                try
+                {
+                    tree.ProcessFrame -= attach;
+                    sceneRoot!.AddChild(wheel);
+                    sceneRoot.AddChild(audio);
+                    sceneRoot.AddChild(input);
+                    sceneRoot.AddChild(bubble);
+                    sceneRoot.AddChild(settings);
+                    sceneRoot.AddChild(pinger);
+                    GD.Print($"[VR] nodes attached. wheel.IsInsideTree={wheel.IsInsideTree()}, input.IsInsideTree={input.IsInsideTree()}");
+
+                    Func<string, bool> hasAudioFn = text =>
+                    {
+                        if (string.IsNullOrEmpty(text)) return false;
+                        var key = TTS.AudioCache.Key(text, config.Schema.DefaultVoice);
+                        return cache.TryGet(key, out _);
+                    };
+                    // Manual lifecycle since Godot source generators don't run for this project.
+                    wheel.Initialize(modDir: ModDir, hasAudio: hasAudioFn);
+                    input.StartPolling();
+                    bubble.StartPolling();
+                    settings.Initialize(config,
+                        onSaved: () =>
+                        {
+                            GD.Print("[VR] settings saved; wheel will reflect new lines.");
+                        },
+                        toggleKeyHint: KeyToHint(settingsKey),
+                        hasAudio: hasAudioFn);
+                    pinger.Start(sendPing);
+                }
+                catch (Exception ex)
+                {
+                    GD.PrintErr($"[VR] deferred attach failed: {ex}");
+                }
+            };
+            tree.ProcessFrame += attach;
+            GD.Print("[VR] Initialize complete — node attach scheduled for first ProcessFrame.");
         }
         catch (Exception ex)
         {
-            // Surface to Godot's error log rather than silently swallowing.
-            GD.PrintErr($"[VoiceRoulette] Initialize failed: {ex}");
+            GD.PrintErr($"[VR] Initialize FAILED: {ex}");
         }
     }
 
@@ -129,6 +210,26 @@ public static class Plugin
         }
         return texts;
     }
+
+    private static Key ParseKey(string s, Key fallback)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return fallback;
+        return Enum.TryParse<Key>(s, ignoreCase: true, out var k) ? k : fallback;
+    }
+
+    private static string KeyToHint(Key k) => k switch
+    {
+        Key.Semicolon => ";",
+        Key.Apostrophe => "'",
+        Key.Backslash => "\\",
+        Key.Bracketleft => "[",
+        Key.Bracketright => "]",
+        Key.Comma => ",",
+        Key.Period => ".",
+        Key.Slash => "/",
+        Key.Quoteleft => "`",
+        _ => k.ToString(),
+    };
 
     private static string ResolveModDir()
     {

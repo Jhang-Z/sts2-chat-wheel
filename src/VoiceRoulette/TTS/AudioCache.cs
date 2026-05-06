@@ -50,6 +50,17 @@ public sealed class AudioCache
         }
     }
 
+    public void SeedFrom(string sourceDir)
+    {
+        if (!Directory.Exists(sourceDir)) return;
+        foreach (var src in Directory.GetFiles(sourceDir, "*.mp3"))
+        {
+            var dest = Path.Combine(_dir, Path.GetFileName(src));
+            if (!File.Exists(dest))
+                File.Copy(src, dest);
+        }
+    }
+
     private string PathFor(string key) => Path.Combine(_dir, $"{key}.mp3");
 
     private void EvictIfOverCapacity()

@@ -6,3 +6,6 @@ obj/
 cache/
 lib/*.dll
 !lib/.gitkeep
+.claude/
+.DS_Store
+dist/
