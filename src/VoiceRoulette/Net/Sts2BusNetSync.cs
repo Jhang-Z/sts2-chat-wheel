@@ -276,24 +276,31 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
         var typeToId = (Dictionary<Type, int>)typeToIdField.GetValue(cache)!;
         var idToType = (List<Type>)idToTypeField.GetValue(cache)!;
 
-        // Guard: only inject if not already present (idempotent across hot-reloads).
-        if (typeToId.ContainsKey(messageType)) return;
+        Godot.GD.Print($"[VR][Net] inject START: pre typeToId.Count={typeToId.Count}, idToType.Count={idToType.Count}");
 
-        var preCount = idToType.Count;
+        // If the type is already registered (e.g. RegisterMessageHandler<T> auto-
+        // registered it, or a previous mod load left it cached), MOVE it to the
+        // fixed slot. We don't early-return — that's how we ended up with
+        // peer-divergent IDs before.
+        if (typeToId.TryGetValue(messageType, out var existingId))
+        {
+            Godot.GD.Print($"[VR][Net] inject: type already registered at id={existingId}, force-moving to fixed id={VoiceRouletteFixedTypeId}");
+            typeToId.Remove(messageType);
+            if (existingId >= 0 && existingId < idToType.Count && idToType[existingId] == messageType)
+                idToType[existingId] = typeof(object);  // free the old slot
+        }
 
-        // Pad the list up to the fixed slot. Use a sentinel placeholder Type
-        // for empty slots (typeof(object)) — no game code looks these up by
-        // ID, so the placeholder is invisible to the rest of the engine.
+        // Pad to fixed index.
         while (idToType.Count < VoiceRouletteFixedTypeId)
             idToType.Add(typeof(object));
 
         if (idToType.Count == VoiceRouletteFixedTypeId)
             idToType.Add(messageType);
         else
-            idToType[VoiceRouletteFixedTypeId] = messageType;  // overwrite if already padded
+            idToType[VoiceRouletteFixedTypeId] = messageType;
 
         typeToId[messageType] = VoiceRouletteFixedTypeId;
 
-        Godot.GD.Print($"[VR][Net] InjectIntoMessageTypesCache: pre-count={preCount}, used fixed id={VoiceRouletteFixedTypeId}, post-count={idToType.Count}");
+        Godot.GD.Print($"[VR][Net] inject DONE: VoiceRouletteMessage now at id={VoiceRouletteFixedTypeId}, idToType.Count={idToType.Count}");
     }
 }
