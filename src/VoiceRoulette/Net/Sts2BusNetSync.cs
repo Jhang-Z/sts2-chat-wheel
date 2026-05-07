@@ -68,6 +68,32 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
         _handler = HandleMessage;
         _netService.RegisterMessageHandler(_handler);
         Godot.GD.Print($"[VR][Net] Sts2BusNetSync ready — handler registered for {typeof(VoiceRouletteMessage).Name}");
+
+        TrySelfLoopbackTest();
+    }
+
+    /// <summary>
+    /// Diagnostic: try the SendMessage(T, ulong) overload with our own NetId
+    /// to see if the bus loops back to self. If our HandleMessage fires with
+    /// a known marker text, we know the entire send→receive pipeline works
+    /// for our type, and the issue with teammates not receiving must be in
+    /// the network/peer-discovery layer.
+    /// </summary>
+    private void TrySelfLoopbackTest()
+    {
+        try
+        {
+            var myId = _netService.NetId;
+            Godot.GD.Print($"[VR][Net] self-loopback test: sending to NetId={myId}");
+            var probe = new WireMessage(WireMessage.CurrentVersion, 0, "__VR_LOOPBACK_PROBE__", "", 0, null);
+            // Try the targeted overload — interpretation may vary (recipient vs exclude).
+            try { _netService.SendMessage(new VoiceRouletteMessage(probe), myId); }
+            catch (Exception ex) { Godot.GD.Print($"[VR][Net] targeted SendMessage threw: {ex.GetType().Name}"); }
+        }
+        catch (Exception ex)
+        {
+            Godot.GD.PrintErr($"[VR][Net] self-loopback test failed to set up: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -103,6 +129,14 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
         if (wire is null)
         {
             Godot.GD.PrintErr("[VR][Net] failed to deserialize wire from bus message");
+            return;
+        }
+
+        // Eat self-loopback probe and log it loudly — if this fires, the bus
+        // pipeline is fully working for our type.
+        if (wire.Text == "__VR_LOOPBACK_PROBE__")
+        {
+            Godot.GD.Print($"[VR][Net] ✅ SELF-LOOPBACK PROBE RECEIVED — bus pipeline works end-to-end (senderId={senderId})");
             return;
         }
 
@@ -200,6 +234,22 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
         InjectIntoMessageTypesCache(typeof(VoiceRouletteMessage));
     }
 
+    /// <summary>
+    /// Hardcoded ID for VoiceRouletteMessage. MUST be the same on every peer
+    /// running the mod. Otherwise sender's serialized prefix won't match
+    /// receiver's lookup, and packets get dropped with no error.
+    ///
+    /// Why fixed: idToType.Count varies per peer based on game build, mod load
+    /// order, and what other types have been touched. Appending at .Count
+    /// produced different IDs on each side (e.g. user got 48, teammate could
+    /// get 49+) — that's the classic "I send, they don't receive" symptom.
+    ///
+    /// Choice of 200: well above any built-in count (the type fields _t0.._t48
+    /// suggest ≤49 game types). Padding empty slots with a placeholder to
+    /// reach this index is cheap (a List of one Type per slot).
+    /// </summary>
+    private const int VoiceRouletteFixedTypeId = 200;
+
     private static void InjectIntoMessageTypesCache(Type messageType)
     {
         const string msgTypesName = "MegaCrit.Sts2.Core.Multiplayer.Serialization.MessageTypes";
@@ -229,8 +279,21 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
         // Guard: only inject if not already present (idempotent across hot-reloads).
         if (typeToId.ContainsKey(messageType)) return;
 
-        var newId = idToType.Count;
-        idToType.Add(messageType);
-        typeToId[messageType] = newId;
+        var preCount = idToType.Count;
+
+        // Pad the list up to the fixed slot. Use a sentinel placeholder Type
+        // for empty slots (typeof(object)) — no game code looks these up by
+        // ID, so the placeholder is invisible to the rest of the engine.
+        while (idToType.Count < VoiceRouletteFixedTypeId)
+            idToType.Add(typeof(object));
+
+        if (idToType.Count == VoiceRouletteFixedTypeId)
+            idToType.Add(messageType);
+        else
+            idToType[VoiceRouletteFixedTypeId] = messageType;  // overwrite if already padded
+
+        typeToId[messageType] = VoiceRouletteFixedTypeId;
+
+        Godot.GD.Print($"[VR][Net] InjectIntoMessageTypesCache: pre-count={preCount}, used fixed id={VoiceRouletteFixedTypeId}, post-count={idToType.Count}");
     }
 }
