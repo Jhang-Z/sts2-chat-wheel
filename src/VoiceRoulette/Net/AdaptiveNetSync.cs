@@ -91,6 +91,7 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
         else if (!connected && _bus != null)
         {
             DisposeBus();
+            PlayerSlotResolver.Reset();
             GD.Print("[VR][Net] Co-op session ended — reverted to LocalNetSync");
         }
     }
