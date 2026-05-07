@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Godot;
 
@@ -36,6 +37,7 @@ public static class PlayerSlotResolver
     private static readonly Dictionary<Type, PropertyInfo?> _isLocalProp   = new();
     private static readonly Dictionary<Type, PropertyInfo?> _creatureProp  = new();
     private static readonly Dictionary<Type, PropertyInfo?> _playersProp   = new();
+    private static readonly Dictionary<Type, PropertyInfo?> _playerProp    = new();
 
     private static SceneTree Tree => _tree ??= (SceneTree)Engine.GetMainLoop();
 
@@ -225,6 +227,29 @@ public static class PlayerSlotResolver
                     if (!fields.Contains(f.Name)) fields.Add($"{f.Name}:{f.FieldType.Name}");
             }
             GD.Print($"[VR][Resolver]      fields: {string.Join(", ", fields)}");
+
+            // Also dump the inner Player object's properties (where Index /
+            // PlayerId / IsLocal really live).
+            var player = ReadFrom(s, _playerProp, "Player");
+            if (player != null)
+            {
+                var pt = player.GetType();
+                var pProps = new List<string>();
+                for (var ct = pt; ct != null && ct != typeof(object); ct = ct.BaseType)
+                {
+                    foreach (var p in ct.GetProperties(allFlags | BindingFlags.DeclaredOnly))
+                        if (!pProps.Any(x => x.StartsWith(p.Name + ":"))) pProps.Add($"{p.Name}:{p.PropertyType.Name}");
+                }
+                GD.Print($"[VR][Resolver]      Player.type={pt.Name}");
+                GD.Print($"[VR][Resolver]      Player.properties: {string.Join(", ", pProps)}");
+                var pFields = new List<string>();
+                for (var ct = pt; ct != null && ct != typeof(object); ct = ct.BaseType)
+                {
+                    foreach (var f in ct.GetFields(allFlags | BindingFlags.DeclaredOnly))
+                        if (!pFields.Any(x => x.StartsWith(f.Name + ":"))) pFields.Add($"{f.Name}:{f.FieldType.Name}");
+                }
+                GD.Print($"[VR][Resolver]      Player.fields: {string.Join(", ", pFields)}");
+            }
         }
     }
 
@@ -233,6 +258,17 @@ public static class PlayerSlotResolver
     // -------------------------------------------------------------------------
 
     private static object? ReadAnyway(object o, Dictionary<Type, PropertyInfo?> cache, string name)
+    {
+        var v = ReadFrom(o, cache, name);
+        if (v != null) return v;
+        // Fallback: NMultiplayerPlayerState wraps a Player object — Index /
+        // PlayerId / IsLocal etc. live on Player, not on the state widget.
+        var inner = ReadFrom(o, _playerProp, "Player");
+        if (inner != null) return ReadFrom(inner, cache, name);
+        return null;
+    }
+
+    private static object? ReadFrom(object o, Dictionary<Type, PropertyInfo?> cache, string name)
     {
         var t = o.GetType();
         var prop = GetCachedProp(t, cache, name);
