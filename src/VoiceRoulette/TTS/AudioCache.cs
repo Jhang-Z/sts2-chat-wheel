@@ -21,9 +21,9 @@ public sealed class AudioCache
         Directory.CreateDirectory(_dir);
     }
 
-    public static string Key(string text, string voice)
+    public static string Key(string text, string voice, string? emotion = null)
     {
-        var input = $"{text}|{voice}|{FormatVersion}";
+        var input = $"{text}|{voice}|{emotion ?? ""}|{FormatVersion}";
         var hash = SHA1.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(hash).ToLowerInvariant();
     }

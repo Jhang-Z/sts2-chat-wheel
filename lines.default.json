@@ -1,12 +1,13 @@
 {
-  "common": [
-    { "id": "good_card",   "text": "好牌！" },
-    { "id": "fight_elite", "text": "打精英怪！" },
-    { "id": "rest_now",    "text": "去休息点" },
-    { "id": "press_on",    "text": "继续推进" },
-    { "id": "wait",        "text": "等一下" },
-    { "id": "retreat",     "text": "撤退！" },
-    { "id": "tank",        "text": "我来挡" },
-    { "id": "nice",        "text": "干得漂亮！" }
+  "_comment": "Reference only. Real config lives at data/config.jsonc. emotion: null = text-only; novel_dialog | happy | angry | sad | sorry = voiced.",
+  "lines": [
+    { "id": "slot_0", "text": "好牌！",     "emotion": "happy" },
+    { "id": "slot_1", "text": "打精英怪！", "emotion": "novel_dialog" },
+    { "id": "slot_2", "text": "去休息点",   "emotion": null },
+    { "id": "slot_3", "text": "继续推进",   "emotion": "novel_dialog" },
+    { "id": "slot_4", "text": "等一下",     "emotion": null },
+    { "id": "slot_5", "text": "撤退！",     "emotion": "angry" },
+    { "id": "slot_6", "text": "我来挡",     "emotion": "novel_dialog" },
+    { "id": "slot_7", "text": "干得漂亮！", "emotion": "happy" }
   ]
 }

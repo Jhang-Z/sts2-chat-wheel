@@ -2,5 +2,6 @@ namespace VoiceRoulette.Dispatch;
 
 public interface IAudioOutput
 {
-    void Play(byte senderSlot, string text, string voice);
+    // emotion=null → text-only line, no audio playback.
+    void Play(byte senderSlot, string text, string voice, string? emotion);
 }

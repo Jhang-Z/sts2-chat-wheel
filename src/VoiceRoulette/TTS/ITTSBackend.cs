@@ -5,5 +5,5 @@ namespace VoiceRoulette.TTS;
 
 public interface ITTSBackend
 {
-    IAsyncEnumerable<DoubaoEvent> SynthesizeAsync(string text, string voice, CancellationToken ct = default);
+    IAsyncEnumerable<DoubaoEvent> SynthesizeAsync(string text, string voice, string? emotion = null, CancellationToken ct = default);
 }

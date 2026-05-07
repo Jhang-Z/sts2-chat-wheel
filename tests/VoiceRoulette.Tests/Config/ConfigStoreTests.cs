@@ -15,9 +15,9 @@ public class ConfigStoreTests
     {
         var store = ConfigStore.Load(TempPath());
         store.Schema.Hotkey.Should().Be("V");
-        store.Schema.Cooldown.PerSend.Should().Be(1.5);
-        store.Schema.Cooldown.WindowMax.Should().Be(5);
-        store.Schema.DefaultVoice.Should().Be("zh_female_kailangjiejie_moon_bigtts");
+        store.Schema.Cooldown.PerSend.Should().Be(0.5);
+        store.Schema.Cooldown.WindowMax.Should().Be(30);
+        store.Schema.DefaultVoice.Should().Be("zh_female_shuangkuaisisi_uranus_bigtts");
     }
 
     [Fact]
@@ -39,6 +39,6 @@ public class ConfigStoreTests
         File.WriteAllText(path, "{ \"hotkey\": \"X\" }");
         var store = ConfigStore.Load(path);
         store.Schema.Hotkey.Should().Be("X");
-        store.Schema.Cooldown.PerSend.Should().Be(1.5);  // default preserved
+        store.Schema.Cooldown.PerSend.Should().Be(0.5);  // default preserved
     }
 }

@@ -1,24 +1,18 @@
-// CONFIRMED mod entry-point (from binary probe of sts2.dll, 2026-05-01):
+// CONFIRMED mod entry-point (binary probe of sts2.dll, 2026-05-01):
+// MegaCrit.Sts2.Core.Modding.ModInitializerAttribute("Initialize") on the class
+// + public static void Initialize() method.
 //
-// MegaCrit.Sts2.Core.Modding.ModInitializerAttribute(string initializerMethod) exists
-// and is accessible. ModManager.CallModInitializer reflects on loaded assemblies,
-// finds classes decorated with [ModInitializer("MethodName")], and invokes the named
-// static method. The attribute is applied to the class, not the method.
-//
-// Usage: [ModInitializer("Initialize")] on the class; Initialize() must be public static void.
-//
-// UNCONFIRMED gaps (v0.1 stubs):
-// - localSlot: no confirmed API for local-player slot index via RunManager.
-//   Defaulted to 0 (always works for singleplayer; p2 will have wrong filter).
-// - character: no confirmed API for current run character. Defaulted to "ironclad".
-//   Voice selection will always use the ironclad voice mapping.
-// Both stubs are safe for v0.1 singleplayer + co-op testing.
+// v0.2 changes (this rewrite):
+//   - Single voice (zh_female_shuangkuaisisi_moon_bigtts), no per-character map.
+//   - Per-line voice toggle + emotion dropdown (设置页里).
+//   - Status pings (易伤/虚弱、potion/power) fixed to emotion=novel_dialog.
 
 using Godot;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using VoiceRoulette.Audio;
+using VoiceRoulette.Combat;
 using VoiceRoulette.Config;
 using VoiceRoulette.Dispatch;
 using VoiceRoulette.Input;
@@ -33,12 +27,12 @@ namespace VoiceRoulette;
 public static class Plugin
 {
     public const string Id = "sts2_chat_wheel";
-    public const string Version = "0.1.0";
+    public const string Version = "0.2.0";
+
+    private const string PingEmotion = "novel_dialog"; // status pings always speak in 平和
 
     private static readonly string ModDir = ResolveModDir();
 
-    // Called by ModManager.CallModInitializer — registered via [ModInitializer("Initialize")]
-    // on the Plugin class (see attribute above). Must be public static void.
     public static void Initialize()
     {
         try
@@ -50,7 +44,6 @@ public static class Plugin
 
             var dataDir = Path.Combine(ModDir, "data");
             Directory.CreateDirectory(dataDir);
-            // .jsonc extension avoids the game's mod-manifest scanner (.json only).
             var configPath = Path.Combine(dataDir, "config.jsonc");
             var config = ConfigStore.Load(configPath);
             config.Save();
@@ -61,27 +54,25 @@ public static class Plugin
             var cacheDir = Path.Combine(ModDir, "cache");
             const long CacheMaxBytes = 100 * 1024 * 1024;
             var cache = new AudioCache(cacheDir, CacheMaxBytes);
-            var seedDir = Path.Combine(ModDir, "prerendered");
-            cache.SeedFrom(seedDir);
-            var seededCount = Directory.Exists(cacheDir)
-                ? Directory.GetFiles(cacheDir, "*.mp3").Length : 0;
-            GD.Print($"[VR] cache dir={cacheDir}, seed dir={seedDir} (exists={Directory.Exists(seedDir)}), files in cache={seededCount}");
+            // No prerendered seeding in v0.2 — voice + emotion combination space is
+            // too large to ship offline. Doubao TTS synthesizes on first use, then caches.
 
             var doubao = new DoubaoClient(
                 config.Schema.Doubao.Endpoint,
-                config.Schema.Doubao.ApiKey);
+                config.Schema.Doubao.ApiKey,
+                config.Schema.Doubao.ResourceId);
             var tts = new TTSPipeline(doubao, cache);
 
             var wheel = new WheelUI();
             var audio = new AudioPlayer(tts);
             var bubble = new BubbleOverlay();
             var settings = new SettingsScreen();
-            var pinger = new VoiceRoulette.Input.StatusPinger();
+            var pinger = new StatusPinger();
+            var analyzer = new HandAnalyzer();
             INetSync net = Sts2BusNetSync.TryCreate() ?? (INetSync)new LocalNetSync();
             GD.Print($"[VR] NetSync = {net.GetType().Name}");
 
             const byte LocalSlot = 0;
-            const string Character = "ironclad";
 
             var dispatcher = new Dispatch.Dispatcher(
                 localSlot: LocalSlot,
@@ -94,44 +85,50 @@ public static class Plugin
 
             var input = new InputCapture(
                 wheelKey, wheel,
-                getLineTexts: () => CurrentPageTexts(registry, Character),
+                getLineTexts: () => CurrentPageView(config.Schema.Lines),
                 settingsHotkey: settingsKey);
 
             input.Released += idx =>
             {
                 GD.Print($"[VR] Wheel released, sector={idx}");
-                if (idx < 0) return;
-                var pageSize = config.Schema.Pages.Common.Count;
-                if (idx >= pageSize) return;
-                var line = registry.Resolve(WheelPage.Common, idx, Character);
-                GD.Print($"[VR] Dispatching line: text='{line.Text}' voice='{line.Voice}'");
+                if (idx < 0 || idx >= config.Schema.Lines.Count) return;
+                var entry = config.Schema.Lines[idx];
+                if (string.IsNullOrEmpty(entry.Text)) return;
+                var line = registry.Resolve(idx);
+                GD.Print($"[VR] Dispatching: text='{line.Text}' emotion='{line.Emotion ?? "(none)"}'");
                 dispatcher.Send(line);
-                // Show local bubble even when audio plays back: instant feedback.
-                bubble.Show(line.Text, LocalSlot);
+                bubble.Show(line.Text, LocalSlot, hasVoice: line.Emotion != null);
             };
 
-            // Show bubble for remote players too.
             net.LineReceived += msg =>
             {
                 if (msg.Sender == LocalSlot) return;
-                bubble.Show(msg.Text, msg.Sender);
+                bubble.Show(msg.Text, msg.Sender, hasVoice: msg.Emotion != null);
             };
 
-            // F2 toggles the settings screen.
             input.SettingsToggled += () => settings.Toggle();
 
-            // Cmd/Ctrl+Click on a potion/power broadcasts a status ping.
-            // Goes through dispatcher (cooldown applied) so it shares pacing with voice wheel.
+            // Status pings (potion/power click, hand analysis) always go through dispatcher
+            // with fixed emotion=novel_dialog so they share cooldown with the wheel.
             Action<string> sendPing = text =>
             {
-                var line = new Lines.Line("status_ping", text, config.Schema.DefaultVoice);
+                var line = new Line("status_ping", text, config.Schema.DefaultVoice, PingEmotion);
                 dispatcher.Send(line);
-                bubble.Show(text, LocalSlot);
+                bubble.Show(text, LocalSlot, hasVoice: true);
             };
 
-            // Defer node attachment to the first idle frame: at mod-load time
-            // root Window is mid-setup and rejects AddChild. We connect once,
-            // attach our nodes, then disconnect to avoid re-running.
+            // Settings preview: synthesize and play locally without going through
+            // the dispatcher (no cooldown, no broadcast, just so the user can hear what they configured).
+            // Voice comes from the SettingsScreen's current dropdown selection — not config —
+            // so changes audition before the user hits Save.
+            Action<string, string?, string> preview = (text, emotion, voice) =>
+            {
+                if (string.IsNullOrEmpty(text)) return;
+                audio.Play(LocalSlot, text, voice, emotion);
+            };
+
+            // Defer node attachment to first idle frame: at mod-load time the root Window
+            // is mid-setup and rejects AddChild.
             var tree = (SceneTree)Engine.GetMainLoop();
             Action? attach = null;
             attach = () =>
@@ -145,26 +142,26 @@ public static class Plugin
                     sceneRoot.AddChild(bubble);
                     sceneRoot.AddChild(settings);
                     sceneRoot.AddChild(pinger);
-                    GD.Print($"[VR] nodes attached. wheel.IsInsideTree={wheel.IsInsideTree()}, input.IsInsideTree={input.IsInsideTree()}");
+                    sceneRoot.AddChild(analyzer);
+                    GD.Print($"[VR] nodes attached.");
 
-                    Func<string, bool> hasAudioFn = text =>
-                    {
-                        if (string.IsNullOrEmpty(text)) return false;
-                        var key = TTS.AudioCache.Key(text, config.Schema.DefaultVoice);
-                        return cache.TryGet(key, out _);
-                    };
-                    // Manual lifecycle since Godot source generators don't run for this project.
-                    wheel.Initialize(modDir: ModDir, hasAudio: hasAudioFn);
+                    wheel.Initialize(modDir: ModDir);
                     input.StartPolling();
                     bubble.StartPolling();
                     settings.Initialize(config,
                         onSaved: () =>
                         {
-                            GD.Print("[VR] settings saved; wheel will reflect new lines.");
+                            // Re-parse hotkeys from saved config and rebind live —
+                            // user expects new keys to work immediately, no restart.
+                            var newWheel = ParseKey(config.Schema.Hotkey, Key.V);
+                            var newSettings = ParseKey(config.Schema.SettingsHotkey, Key.Semicolon);
+                            input.Rebind(newWheel, newSettings);
+                            GD.Print($"[VR] settings saved. hotkeys: wheel={newWheel} settings={newSettings}");
                         },
-                        toggleKeyHint: KeyToHint(settingsKey),
-                        hasAudio: hasAudioFn);
+                        previewCallback: preview,
+                        toggleKeyHint: KeyToHint(settingsKey));
                     pinger.Start(sendPing);
+                    analyzer.Start(LocalSlot, sendPing);
                 }
                 catch (Exception ex)
                 {
@@ -183,32 +180,30 @@ public static class Plugin
     public static void Unload()
     {
         // Godot nodes auto-free when removed from the scene tree.
-        // Sts2BusNetSync is IDisposable; if we held a reference we'd dispose here.
-        // v0.1: no explicit cleanup needed beyond node lifecycle.
     }
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
-    private static IList<string> CurrentPageTexts(LineRegistry registry, string character)
+    private static (IList<string> texts, IList<bool> hasVoice) CurrentPageView(IList<LineEntry> lines)
     {
-        // v0.1: always show Common page. A future task can add per-character pages.
-        var texts = new List<string>();
-        const int SectorCount = 8;
-        for (var i = 0; i < SectorCount; i++)
+        var texts = new List<string>(8);
+        var hasVoice = new List<bool>(8);
+        for (var i = 0; i < 8; i++)
         {
-            try
+            if (i < lines.Count)
             {
-                var line = registry.Resolve(WheelPage.Common, i, character);
-                texts.Add(line.Text);
+                texts.Add(lines[i].Text ?? "");
+                hasVoice.Add(lines[i].Emotion != null);
             }
-            catch
+            else
             {
-                texts.Add(string.Empty);
+                texts.Add("");
+                hasVoice.Add(false);
             }
         }
-        return texts;
+        return (texts, hasVoice);
     }
 
     private static Key ParseKey(string s, Key fallback)
@@ -233,18 +228,12 @@ public static class Plugin
 
     private static string ResolveModDir()
     {
-        // The mod DLL lives in <mods_dir>/voice_roulette/VoiceRoulette.dll.
-        // Walk up one level to get the mod directory.
         var dllPath = typeof(Plugin).Assembly.Location;
-        return Path.GetDirectoryName(dllPath)
-            ?? AppContext.BaseDirectory;
+        return Path.GetDirectoryName(dllPath) ?? AppContext.BaseDirectory;
     }
 }
 
-// -------------------------------------------------------------------------
-// GodotClock — IClock implementation backed by Godot's monotonic timer.
-// Placed here to keep it out of the shared Dispatch layer (Godot dependency).
-// -------------------------------------------------------------------------
+// IClock backed by Godot's monotonic timer.
 file sealed class GodotClock : IClock
 {
     public double NowSeconds() => Time.GetTicksMsec() / 1000.0;

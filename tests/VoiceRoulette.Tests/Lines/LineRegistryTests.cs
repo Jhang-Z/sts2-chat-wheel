@@ -14,31 +14,33 @@ public class LineRegistryTests
     }
 
     [Fact]
-    public void Resolve_CommonPage_ReturnsExpectedText()
+    public void Resolve_FirstSlot_ReturnsDefaultText()
     {
-        var line = Build().Resolve(WheelPage.Common, sectorIdx: 0, character: "ironclad");
+        var line = Build().Resolve(0);
         line.Text.Should().Be("好牌！");
-        line.Voice.Should().Be("zh_female_kailangjiejie_moon_bigtts");
+        line.Voice.Should().Be("zh_female_shuangkuaisisi_uranus_bigtts");
+        line.Emotion.Should().Be("happy");
     }
 
     [Fact]
-    public void Resolve_VoiceMapDollarDefault_ResolvesToDefaultVoice()
+    public void Resolve_TextOnlySlot_HasNullEmotion()
+    {
+        // Default at index 2 is "去休息点" with Emotion=null (text-only).
+        var line = Build().Resolve(2);
+        line.Emotion.Should().BeNull();
+    }
+
+    [Fact]
+    public void Resolve_VoiceComesFromDefaultVoice()
     {
         var schema = new ConfigSchema { DefaultVoice = "voice_x" };
-        var reg = new LineRegistry(schema);
-        reg.Resolve(WheelPage.Common, 3, "silent").Voice.Should().Be("voice_x");
+        new LineRegistry(schema).Resolve(3).Voice.Should().Be("voice_x");
     }
 
     [Fact]
     public void Resolve_OutOfRangeSector_Throws()
     {
-        var act = () => Build().Resolve(WheelPage.Common, 99, "ironclad");
+        var act = () => Build().Resolve(99);
         act.Should().Throw<System.ArgumentOutOfRangeException>();
-    }
-
-    [Fact]
-    public void Resolve_CustomEmptySlot_ReturnsEmptyTextAllowingDispatcherToSkip()
-    {
-        Build().Resolve(WheelPage.Custom, 0, "ironclad").Text.Should().Be("");
     }
 }

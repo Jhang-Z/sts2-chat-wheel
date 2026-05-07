@@ -1,362 +1,204 @@
 using Godot;
-using System;
 using System.Collections.Generic;
-using System.IO;
 
 namespace VoiceRoulette.UI;
 
-// Wheel UI faithful to the design mockup. Uses pre-baked PNG textures
-// (parchment cards with paper grain, center flame hub, decorative gold ring)
-// instead of runtime-drawn polygons. Textures live in <modDir>/textures/ and
-// are loaded via ImageTexture.LoadFromFile.
+// Minimalist 8-slot voice wheel — Dota-style:
+//   • No backdrop, no duplicate label below — just the 8 text items
+//   • Per-sector alignment: left-side texts are right-aligned (grow away from
+//     center), right-side texts are left-aligned, top/bottom centered.
+//     This keeps the 8 items visually equidistant from the hub regardless of
+//     text length.
+//   • Bigger round center hub with a gold arrow that rotates to point at the
+//     currently-hovered sector (matches the user's reference image).
+//   • Selected sector → text becomes gold + bold + slightly larger.
 public sealed partial class WheelUI : CanvasLayer
 {
-    private const int SectorCount = 8;
-    private const float SlotRadius = 240f;            // distance from wheel center to slot card center
-    private const float CardWidth = 130f;
-    private const float CardHeight = 156f;
-    private const float CenterHubSize = 130f;
-    private const float OuterRingSize = 660f;
-    private const float MouseDeadZoneSquared = 25f;
+    private const int   SectorCount    = 8;
+    private const float TextRadius     = 160f;  // center → text anchor (closer to hub)
+    private const float TextW          = 280f;
+    private const float TextH          = 40f;
+    private const float HubRadius      = 42f;
+    private const float HubInnerRadius = 36f;   // double-ring ornament radius
+    private const float ArrowTipR      = 60f;   // OUTSIDE the hub, between hub and text
+    private const float ArrowBaseR     = 46f;
+    private const int   MaxSectorChars = 10;
+    private const float MouseDeadZoneSq = 36f;
 
-    // Heuristic: pick a glyph based on phrase keywords.
-    private static readonly (string keyword, string glyph)[] IconRules =
-    {
-        ("好",   "★"), ("漂亮", "★"), ("厉害", "★"), ("赞",   "★"),
-        ("攻",   "⚔"), ("打",   "⚔"), ("精英", "⚔"),
-        ("挡",   "🛡"), ("防",   "🛡"),
-        ("撤",   "🏃"), ("快走", "🏃"), ("跑",   "🏃"),
-        ("休息", "🔥"), ("回血", "♥"), ("治",   "♥"), ("谢",   "♥"),
-        ("等",   "⚠"), ("小心", "⚠"), ("注意", "⚠"),
-        ("敌",   "❓"), ("哪",   "❓"), ("?",    "❓"), ("？",   "❓"),
-        ("糟",   "💀"), ("死",   "💀"),
-        ("继续", "➤"), ("推进", "➤"), ("前",   "➤"),
-    };
+    private static readonly Color HubBg          = new("11100EE0");
+    private static readonly Color HubBorder      = StsTheme.MenuAccent;
+    private static readonly Color HubDot         = StsTheme.MenuAccent;
+    private static readonly Color TextColor      = StsTheme.MenuText;
+    private static readonly Color TextColorHover = StsTheme.MenuAccent;
+    private static readonly Color TextOutline    = new("00000099");
 
-    private const string IconAudio = "♪";
-    private const string IconNoAudio = "○";
+    private readonly Sector[] _sectors = new Sector[SectorCount];
+    private Polygon2D? _selectionArrow;
+    private Vector2 _center;
 
-    // Texture cache
-    private Texture2D? _texCard;
-    private Texture2D? _texCardHover;
-    private Texture2D? _texCenterHub;
-    private Texture2D? _texOuterRing;
-
-    // Per-slot nodes
-    private readonly TextureRect[] _slotCards = new TextureRect[SectorCount];
-    private readonly Label[] _slotIcons = new Label[SectorCount];
-    private readonly Label[] _slotTexts = new Label[SectorCount];
-    private readonly Label[] _slotNumbers = new Label[SectorCount];
-    private readonly Label[] _slotAudioBadges = new Label[SectorCount];
-
-    // Center cluster
-    private Label? _centerLabel;
-    private Label? _hintLabel;
-    private Line2D? _directionLine;
-
-    // State
     private int _selected = -1;
     private List<string> _texts = new();
-    private Func<string, bool>? _hasAudio;
-    private string? _modDir;
+    private List<bool> _hasVoice = new();
     private bool _initialized;
 
     public int SelectedIndex => _selected;
 
-    public void Initialize(string modDir, Func<string, bool>? hasAudio = null)
+    public void Initialize(string modDir, System.Func<string, bool>? hasAudio = null)
     {
+        _ = modDir; _ = hasAudio;
         if (_initialized) return;
         _initialized = true;
-        _modDir = modDir;
-        _hasAudio = hasAudio ?? (_ => false);
         Layer = 200;
 
-        LoadTextures();
-
         var viewport = GetViewport().GetVisibleRect().Size;
-        var center = new Vector2(viewport.X / 2f, viewport.Y / 2f);
+        _center = viewport / 2f;
 
-        BuildBackground(center);
-        BuildSlots(center);
-        BuildCenterCluster(center);
+        BuildSectors();
+        BuildHub();
 
         Visible = false;
-        GD.Print($"[VR][Wheel] Initialize done. center={center}, modDir={modDir}");
+        GD.Print($"[VR][Wheel] Initialize done. center={_center}");
     }
 
     // -------------------------------------------------------------------------
-    // Texture loading from disk
+    // Build
     // -------------------------------------------------------------------------
 
-    private void LoadTextures()
+    private void BuildSectors()
     {
-        if (_modDir == null) return;
-        var texDir = Path.Combine(_modDir, "textures");
-        _texCard = LoadTex(Path.Combine(texDir, "card.png"));
-        _texCardHover = LoadTex(Path.Combine(texDir, "card_hover.png"));
-        _texCenterHub = LoadTex(Path.Combine(texDir, "center_hub.png"));
-        _texOuterRing = LoadTex(Path.Combine(texDir, "outer_ring.png"));
-    }
-
-    private static Texture2D? LoadTex(string path)
-    {
-        if (!File.Exists(path))
+        var step = Mathf.Tau / SectorCount;
+        for (var i = 0; i < SectorCount; i++)
         {
-            GD.PrintErr($"[VR][Wheel] missing texture: {path}");
-            return null;
-        }
-        var img = new Image();
-        var err = img.Load(path);
-        if (err != Error.Ok)
-        {
-            GD.PrintErr($"[VR][Wheel] failed to load {path}: {err}");
-            return null;
-        }
-        return ImageTexture.CreateFromImage(img);
-    }
+            var angle = -Mathf.Pi / 2f + i * step;
+            var anchor = _center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * TextRadius;
 
-    // -------------------------------------------------------------------------
-    // Background — soft glow + outer gold ring
-    // -------------------------------------------------------------------------
-
-    private void BuildBackground(Vector2 center)
-    {
-        // Soft dark backdrop disc behind the whole wheel
-        var glow = MakeCircle(center, OuterRingSize / 2f + 40, 80, new Color("0e0a06ee"));
-        AddChild(glow);
-
-        // Outer decorative gold ring (texture)
-        if (_texOuterRing != null)
-        {
-            var ring = new TextureRect
+            // Per-sector alignment so all 8 items hug the wheel evenly:
+            //   sectors at top (0) / bottom (4)              → centered
+            //   right side (1, 2, 3)  → left-aligned, anchor at LEFT edge
+            //   left side  (5, 6, 7)  → right-aligned, anchor at RIGHT edge
+            HorizontalAlignment ha;
+            Vector2 labelPos;
+            if (i == 0 || i == 4)
             {
-                Texture = _texOuterRing,
-                Size = new Vector2(OuterRingSize, OuterRingSize),
-                Position = center - new Vector2(OuterRingSize / 2f, OuterRingSize / 2f),
-                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                StretchMode = TextureRect.StretchModeEnum.Scale,
-            };
-            AddChild(ring);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // 8 parchment-card slots arranged radially
-    // -------------------------------------------------------------------------
-
-    private void BuildSlots(Vector2 center)
-    {
-        for (int i = 0; i < SectorCount; i++)
-        {
-            var angle = -Mathf.Pi / 2f + i * (2f * Mathf.Pi / SectorCount);
-            var slotCenter = center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * SlotRadius;
-            // Rotate the card so the narrow top points OUTWARD (top of card faces outside the wheel).
-            var rotation = angle + Mathf.Pi / 2f;
-
-            var card = new TextureRect
+                ha = HorizontalAlignment.Center;
+                labelPos = anchor - new Vector2(TextW / 2, TextH / 2);
+            }
+            else if (i >= 1 && i <= 3)
             {
-                Texture = _texCard,
-                Size = new Vector2(CardWidth, CardHeight),
-                Position = slotCenter,
-                PivotOffset = new Vector2(CardWidth / 2f, CardHeight / 2f),
-                Rotation = rotation,
-                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                StretchMode = TextureRect.StretchModeEnum.Scale,
-                MouseFilter = Control.MouseFilterEnum.Ignore,
-            };
-            // Center the rotated card on slotCenter (account for pivot offset)
-            card.Position = slotCenter - new Vector2(CardWidth / 2f, CardHeight / 2f);
-            AddChild(card);
-            _slotCards[i] = card;
-
-            // Icon in the upper third of the card
-            var icon = new Label
+                ha = HorizontalAlignment.Left;
+                labelPos = anchor - new Vector2(0, TextH / 2);
+            }
+            else // 5, 6, 7
             {
-                HorizontalAlignment = HorizontalAlignment.Center,
+                ha = HorizontalAlignment.Right;
+                labelPos = anchor - new Vector2(TextW, TextH / 2);
+            }
+
+            var lbl = new Label
+            {
+                HorizontalAlignment = ha,
                 VerticalAlignment = VerticalAlignment.Center,
-                Size = new Vector2(60, 60),
-            };
-            icon.AddThemeColorOverride("font_color", new Color("2a1d10"));
-            icon.AddThemeFontSizeOverride("font_size", 32);
-            // Position relative to slot center, accounting for rotation.
-            var iconLocalY = -28f;
-            icon.Position = slotCenter
-                + new Vector2(Mathf.Cos(rotation - Mathf.Pi/2) * 0,
-                              Mathf.Sin(rotation - Mathf.Pi/2) * 0)
-                - new Vector2(30, 30) + RotateVec(new Vector2(0, iconLocalY), rotation);
-            icon.PivotOffset = new Vector2(30, 30);
-            icon.Rotation = rotation;
-            AddChild(icon);
-            _slotIcons[i] = icon;
-
-            // Phrase text in the lower portion of the card
-            var text = new Label
-            {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Size = new Vector2(110, 28),
+                Size = new Vector2(TextW, TextH),
+                Position = labelPos,
                 ClipText = true,
             };
-            text.AddThemeColorOverride("font_color", new Color("2a1d10"));
-            text.AddThemeFontSizeOverride("font_size", 14);
-            var textLocalY = 38f;
-            text.Position = slotCenter - new Vector2(55, 14) + RotateVec(new Vector2(0, textLocalY), rotation);
-            text.PivotOffset = new Vector2(55, 14);
-            text.Rotation = rotation;
-            AddChild(text);
-            _slotTexts[i] = text;
+            lbl.AddThemeColorOverride("font_color", TextColor);
+            // Outline keeps text legible against any battle background.
+            lbl.AddThemeColorOverride("font_outline_color", TextOutline);
+            lbl.AddThemeConstantOverride("outline_size", 6);
+            lbl.AddThemeFontSizeOverride("font_size", StsTheme.FontH2);
+            StsFonts.ApplyTo(lbl, StsFonts.FontWeight.Bold);
+            AddChild(lbl);
 
-            // Audio badge near top-right of card
-            var badge = new Label
-            {
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Size = new Vector2(20, 20),
-            };
-            badge.AddThemeColorOverride("font_color", new Color("d4a937"));
-            badge.AddThemeColorOverride("font_outline_color", new Color("2a1d10"));
-            badge.AddThemeConstantOverride("outline_size", 3);
-            badge.AddThemeFontSizeOverride("font_size", 13);
-            var badgeLocalPos = new Vector2(36, -56);
-            badge.Position = slotCenter - new Vector2(10, 10) + RotateVec(badgeLocalPos, rotation);
-            badge.PivotOffset = new Vector2(10, 10);
-            badge.Rotation = rotation;
-            AddChild(badge);
-            _slotAudioBadges[i] = badge;
-
-            // Sector number outside the wheel (no rotation, world-aligned)
-            var num = new Label
-            {
-                Text = (i + 1).ToString(),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                Size = new Vector2(28, 22),
-            };
-            num.AddThemeColorOverride("font_color", new Color("d4a937"));
-            num.AddThemeColorOverride("font_outline_color", new Color("0a0703"));
-            num.AddThemeConstantOverride("outline_size", 4);
-            num.AddThemeFontSizeOverride("font_size", 18);
-            var numRadius = OuterRingSize / 2f + 14;
-            var numCenter = center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * numRadius;
-            num.Position = numCenter - new Vector2(14, 11);
-            AddChild(num);
-            _slotNumbers[i] = num;
+            _sectors[i] = new Sector { TextLabel = lbl };
         }
     }
 
-    private static Vector2 RotateVec(Vector2 v, float angle)
+    private void BuildHub()
     {
-        var c = Mathf.Cos(angle);
-        var s = Mathf.Sin(angle);
-        return new Vector2(v.X * c - v.Y * s, v.X * s + v.Y * c);
-    }
+        // Ornamental double-ring hub (StS2-style):
+        //   outer thicker gold ring + inner thinner ring + dim warm fill +
+        //   small center dot. No solid black disc — keeps a "compass rose"
+        //   feel without obstructing the game scene behind.
+        AddChild(MakeDisc(_center, HubRadius, HubBg, 64));
+        AddChild(MakeRing(_center, HubRadius, HubBorder, 2.5f, 64));
+        AddChild(MakeRing(_center, HubInnerRadius, HubBorder, 1f, 64));
+        AddChild(MakeDisc(_center, 3.5f, HubDot, 24));
 
-    // -------------------------------------------------------------------------
-    // Center: hub texture + selection text + hint + direction line
-    // -------------------------------------------------------------------------
-
-    private void BuildCenterCluster(Vector2 center)
-    {
-        if (_texCenterHub != null)
+        // Selection arrow — sits OUTSIDE the hub (between hub and text). When
+        // a sector is hovered, the arrow rotates to point at it. Triangle is
+        // defined pointing UP (-Y); we rotate by (angle + π/2).
+        _selectionArrow = new Polygon2D
         {
-            var hub = new TextureRect
+            Polygon = new Vector2[]
             {
-                Texture = _texCenterHub,
-                Size = new Vector2(CenterHubSize, CenterHubSize),
-                Position = center - new Vector2(CenterHubSize / 2f, CenterHubSize / 2f),
-                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-                StretchMode = TextureRect.StretchModeEnum.Scale,
-            };
-            AddChild(hub);
-        }
-
-        _directionLine = new Line2D
-        {
-            Width = 4f,
-            DefaultColor = new Color("ffd76acc"),
-            Antialiased = true,
-            BeginCapMode = Line2D.LineCapMode.Round,
-            EndCapMode = Line2D.LineCapMode.Round,
+                new( 0,  -ArrowTipR),     // tip (outward, away from center)
+                new(-9,  -ArrowBaseR),    // left base
+                new( 9,  -ArrowBaseR),    // right base
+            },
+            Color = HubDot,
+            Position = _center,
             Visible = false,
         };
-        _directionLine.AddPoint(center);
-        _directionLine.AddPoint(center);
-        AddChild(_directionLine);
-
-        _hintLabel = new Label
-        {
-            Text = "释放发送   ·   Esc 取消",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Size = new Vector2(300, 24),
-            Position = center + new Vector2(-150, -OuterRingSize / 2f - 56),
-        };
-        _hintLabel.AddThemeColorOverride("font_color", new Color("c8a878"));
-        _hintLabel.AddThemeFontSizeOverride("font_size", 13);
-        AddChild(_hintLabel);
-
-        _centerLabel = new Label
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Size = new Vector2(420, 36),
-            Position = center + new Vector2(-210, -OuterRingSize / 2f - 34),
-        };
-        _centerLabel.AddThemeColorOverride("font_color", new Color("ffd76a"));
-        _centerLabel.AddThemeColorOverride("font_outline_color", new Color("0a0703"));
-        _centerLabel.AddThemeConstantOverride("outline_size", 6);
-        _centerLabel.AddThemeFontSizeOverride("font_size", 22);
-        AddChild(_centerLabel);
+        AddChild(_selectionArrow);
     }
 
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
 
-    public void OpenWheel(IList<string> lineTexts)
+    public void OpenWheel(IList<string> lineTexts, IList<bool> hasVoice)
     {
         if (!_initialized) return;
         _selected = -1;
         _texts = new List<string>(lineTexts);
-        ResetAllSlotVisuals();
-        if (_centerLabel != null) _centerLabel.Text = "";
-        if (_directionLine != null) _directionLine.Visible = false;
+        _hasVoice = new List<bool>(hasVoice);
         Visible = true;
+        ApplyAll();
     }
 
     public void CloseWheel()
     {
-        ResetAllSlotVisuals();
         _selected = -1;
         Visible = false;
     }
 
     public void SetSelectedFromMouse(Vector2 mouseDelta)
     {
-        if (mouseDelta.LengthSquared() < MouseDeadZoneSquared)
+        if (mouseDelta.LengthSquared() < MouseDeadZoneSq)
         {
-            UpdateDirectionLine(null);
             Highlight(-1);
             return;
         }
-        UpdateDirectionLine(mouseDelta);
-        var angle = Mathf.Atan2(mouseDelta.Y, mouseDelta.X) + Mathf.Pi / 2f + Mathf.Pi / SectorCount;
-        if (angle < 0) angle += 2f * Mathf.Pi;
-        var idx = (int)(angle / (2f * Mathf.Pi / SectorCount)) % SectorCount;
+        var step = Mathf.Tau / SectorCount;
+        var angle = Mathf.Atan2(mouseDelta.Y, mouseDelta.X) + Mathf.Pi / 2f + step / 2f;
+        if (angle < 0) angle += Mathf.Tau;
+        var idx = (int)(angle / step) % SectorCount;
         Highlight(idx);
     }
 
-    private void ResetAllSlotVisuals()
+    // -------------------------------------------------------------------------
+    // Visual state
+    // -------------------------------------------------------------------------
+
+    private void ApplyAll()
     {
-        for (int i = 0; i < SectorCount; i++)
+        for (var i = 0; i < SectorCount; i++)
         {
             var text = i < _texts.Count ? _texts[i] : "";
-            var hasAudio = !string.IsNullOrEmpty(text) && (_hasAudio?.Invoke(text) ?? false);
-
-            _slotTexts[i].Text = text;
-            _slotIcons[i].Text = string.IsNullOrEmpty(text) ? "" : PickIcon(text);
-            _slotAudioBadges[i].Text = string.IsNullOrEmpty(text) ? "" : (hasAudio ? IconAudio : IconNoAudio);
-            _slotAudioBadges[i].AddThemeColorOverride("font_color", hasAudio ? new Color("d4a937") : new Color("6a5238"));
-            _slotCards[i].Texture = _texCard;
+            var voice = i < _hasVoice.Count && _hasVoice[i];
+            ApplySector(i, text, voice, hovered: i == _selected);
         }
+        if (_selectionArrow != null) _selectionArrow.Visible = false;
+    }
+
+    private void ApplySector(int i, string text, bool voice, bool hovered)
+    {
+        var s = _sectors[i];
+        var icon = string.IsNullOrEmpty(text) ? "" : (voice ? "◀)) " : "");
+        s.TextLabel.Text = icon + Truncate(text, MaxSectorChars);
+        s.TextLabel.AddThemeColorOverride("font_color", hovered ? TextColorHover : TextColor);
+        s.TextLabel.AddThemeFontSizeOverride("font_size", hovered ? StsTheme.FontH1 : StsTheme.FontH2);
     }
 
     private void Highlight(int idx)
@@ -364,48 +206,78 @@ public sealed partial class WheelUI : CanvasLayer
         if (idx == _selected) return;
 
         if (_selected >= 0 && _selected < SectorCount)
-            _slotCards[_selected].Texture = _texCard;
+        {
+            var prev = _selected;
+            ApplySector(prev,
+                prev < _texts.Count ? _texts[prev] : "",
+                prev < _hasVoice.Count && _hasVoice[prev],
+                hovered: false);
+        }
 
         _selected = idx;
 
         if (idx >= 0 && idx < SectorCount)
-            _slotCards[idx].Texture = _texCardHover;
+        {
+            ApplySector(idx,
+                idx < _texts.Count ? _texts[idx] : "",
+                idx < _hasVoice.Count && _hasVoice[idx],
+                hovered: true);
 
-        if (_centerLabel != null)
-            _centerLabel.Text = idx >= 0 && idx < _texts.Count ? _texts[idx] : "";
+            // Rotate the arrow to point at the selected sector.
+            if (_selectionArrow != null)
+            {
+                var step = Mathf.Tau / SectorCount;
+                var angle = -Mathf.Pi / 2f + idx * step;
+                // Arrow is defined pointing up (-Y); rotate so its tip points
+                // outward at `angle`. Atan2's 0 is +X, our arrow up is -Y =
+                // angle -π/2, so we rotate by (angle - (-π/2)) = angle + π/2.
+                _selectionArrow.Rotation = angle + Mathf.Pi / 2f;
+                _selectionArrow.Visible = true;
+            }
+        }
+        else
+        {
+            if (_selectionArrow != null) _selectionArrow.Visible = false;
+        }
     }
 
-    private void UpdateDirectionLine(Vector2? mouseDelta)
+    private static string Truncate(string s, int max)
     {
-        if (_directionLine == null) return;
-        if (!mouseDelta.HasValue) { _directionLine.Visible = false; return; }
-        var dir = mouseDelta.Value.Normalized();
-        var viewport = GetViewport().GetVisibleRect().Size;
-        var center = new Vector2(viewport.X / 2f, viewport.Y / 2f);
-        _directionLine.SetPointPosition(0, center + dir * (CenterHubSize / 2f + 4));
-        _directionLine.SetPointPosition(1, center + dir * (CenterHubSize / 2f + 60));
-        _directionLine.Visible = true;
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length <= max ? s : s[..max] + "…";
     }
 
     // -------------------------------------------------------------------------
-    // Helpers
+    // Geometry helpers
     // -------------------------------------------------------------------------
 
-    private static string PickIcon(string phrase)
-    {
-        foreach (var (kw, glyph) in IconRules)
-            if (phrase.Contains(kw)) return glyph;
-        return "✦";
-    }
-
-    private static Polygon2D MakeCircle(Vector2 c, float r, int segs, Color color)
+    private static Polygon2D MakeDisc(Vector2 c, float r, Color color, int segs)
     {
         var pts = new Vector2[segs];
-        for (int i = 0; i < segs; i++)
+        for (var i = 0; i < segs; i++)
         {
             var a = i * Mathf.Tau / segs;
             pts[i] = c + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * r;
         }
         return new Polygon2D { Polygon = pts, Color = color };
+    }
+
+    private static Line2D MakeRing(Vector2 c, float r, Color color, float width, int segs)
+    {
+        var line = new Line2D
+        {
+            DefaultColor = color, Width = width, Antialiased = true, Closed = true,
+        };
+        for (var i = 0; i < segs; i++)
+        {
+            var a = i * Mathf.Tau / segs;
+            line.AddPoint(c + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * r);
+        }
+        return line;
+    }
+
+    private sealed class Sector
+    {
+        public required Label TextLabel;
     }
 }

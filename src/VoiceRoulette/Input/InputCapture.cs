@@ -10,10 +10,12 @@ namespace VoiceRoulette.Input;
 // overrides are never wired up. We poll via SceneTree signals + the Input singleton.
 public sealed partial class InputCapture : Node
 {
-    private readonly Key _hotkey;
-    private readonly Key _settingsHotkey;
+    // Mutable so the settings page can rebind hotkeys at runtime without
+    // recreating this node.
+    private Key _hotkey;
+    private Key _settingsHotkey;
     private readonly WheelUI _wheel;
-    private readonly Func<IList<string>> _getLineTexts;
+    private readonly Func<(IList<string> texts, IList<bool> hasVoice)> _getLineTexts;
     private bool _held;
     private bool _previousPressed;
     private bool _previousSettingsPressed;
@@ -23,12 +25,12 @@ public sealed partial class InputCapture : Node
     public event Action<int>? Released;
     public event Action? SettingsToggled;
 
-    public InputCapture(Key hotkey, WheelUI wheel, Func<IList<string>>? getLineTexts = null, Key settingsHotkey = Key.Semicolon)
+    public InputCapture(Key hotkey, WheelUI wheel, Func<(IList<string>, IList<bool>)>? getLineTexts = null, Key settingsHotkey = Key.Semicolon)
     {
         _hotkey = hotkey;
         _settingsHotkey = settingsHotkey;
         _wheel = wheel;
-        _getLineTexts = getLineTexts ?? (() => Array.Empty<string>());
+        _getLineTexts = getLineTexts ?? (() => (Array.Empty<string>(), Array.Empty<bool>()));
     }
 
     /// <summary>
@@ -42,8 +44,34 @@ public sealed partial class InputCapture : Node
         GD.Print("[VR][Input] StartPolling: hooked SceneTree.ProcessFrame");
     }
 
+    public void Rebind(Key wheelKey, Key settingsKey)
+    {
+        _hotkey = wheelKey;
+        _settingsHotkey = settingsKey;
+        // Reset edge-detector flags so the key currently held doesn't immediately fire.
+        _previousPressed = true;
+        _previousSettingsPressed = true;
+        GD.Print($"[VR][Input] Rebind: wheel={wheelKey} settings={settingsKey}");
+    }
+
     private void OnProcessFrame()
     {
+        // ── Suppress hotkeys while a text input has focus ───────────────────
+        // Without this, typing the literal letter 'Y' or ';' into the settings
+        // text fields would also open the wheel / toggle settings. Check the
+        // currently focused Control on the root viewport — if it's a LineEdit
+        // (or a TextEdit), eat the frame and just refresh edge-detect state.
+        var focused = GetViewport().GuiGetFocusOwner();
+        if (focused is LineEdit || focused is TextEdit)
+        {
+            // Refresh edge state to a "currently held" snapshot so when the
+            // user finishes typing and clicks elsewhere, we don't immediately
+            // fire on the just-released key.
+            _previousPressed = Godot.Input.IsKeyPressed(_hotkey);
+            _previousSettingsPressed = Godot.Input.IsKeyPressed(_settingsHotkey);
+            return;
+        }
+
         // Settings hotkey toggles the settings screen (edge-detected).
         // Default ';' to avoid macOS F-key brightness/volume conflict.
         var settingsPressed = Godot.Input.IsKeyPressed(_settingsHotkey);
@@ -60,7 +88,8 @@ public sealed partial class InputCapture : Node
             GD.Print("[VR][Input] V pressed -> opening wheel");
             _held = true;
             _origin = GetViewport().GetMousePosition();
-            _wheel.OpenWheel(_getLineTexts());
+            var (texts, hasVoice) = _getLineTexts();
+            _wheel.OpenWheel(texts, hasVoice);
         }
         else if (!pressed && _previousPressed && _held)
         {

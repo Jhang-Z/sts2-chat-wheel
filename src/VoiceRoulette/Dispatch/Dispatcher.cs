@@ -36,14 +36,15 @@ public sealed class Dispatcher
 
         var msg = new WireMessage(
             WireMessage.CurrentVersion, _localSlot, line.Text, line.Voice,
-            (ulong)System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            (ulong)System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            line.Emotion);
         _net.Broadcast(msg);
-        _audio.Play(_localSlot, line.Text, line.Voice);
+        _audio.Play(_localSlot, line.Text, line.Voice, line.Emotion);
     }
 
     private void OnReceived(WireMessage m)
     {
         if (m.Sender == _localSlot) return;
-        _audio.Play(m.Sender, m.Text, m.Voice);
+        _audio.Play(m.Sender, m.Text, m.Voice, m.Emotion);
     }
 }

@@ -23,6 +23,15 @@
     <ProjectReference Include="..\..\src\VoiceRoulette\VoiceRoulette.csproj" />
   </ItemGroup>
 
+  <!-- NOTE: tests do NOT copy lib/*.dll. GodotSharp transitively pulls in
+       native bindings that only exist inside the running game process; copying
+       just the managed DLL crashes the test host. As a result, any test that
+       transitively touches code using `Godot.GD.*` won't run outside the game.
+       Pure-logic tests (Config, Cooldown, AudioCache key, WireMessage,
+       LineRegistry, DoubaoEventParser) work fine; we treat the rest as
+       compile-time guards rather than runnable assertions. -->
+
+
   <ItemGroup>
     <None Update="TTS/Fixtures/*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

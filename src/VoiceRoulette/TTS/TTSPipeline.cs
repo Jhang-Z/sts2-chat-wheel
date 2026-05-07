@@ -15,23 +15,37 @@ public sealed class TTSPipeline
         _cache = cache;
     }
 
-    public async Task<string?> SynthesizeToFileAsync(string text, string voice, CancellationToken ct = default)
+    // Returns local mp3 path (cache hit OR fresh synth, both stored in cache/<sha1>.mp3).
+    // Throws TTSException on backend errors so the caller can log a specific reason.
+    public async Task<string?> SynthesizeToFileAsync(string text, string voice, string? emotion = null, CancellationToken ct = default)
     {
-        var key = AudioCache.Key(text, voice);
-        if (_cache.TryGet(key, out var hit)) return hit;
+        var key = AudioCache.Key(text, voice, emotion);
+        if (_cache.TryGet(key, out var hit))
+        {
+            Godot.GD.Print($"[VR][TTS] cache HIT key={key[..8]} text='{text}' emotion={emotion ?? "(none)"}");
+            return hit;
+        }
 
+        Godot.GD.Print($"[VR][TTS] cache MISS key={key[..8]} → calling Doubao");
         using var ms = new MemoryStream();
-        await foreach (var ev in _backend.SynthesizeAsync(text, voice, ct))
+        await foreach (var ev in _backend.SynthesizeAsync(text, voice, emotion, ct))
         {
             switch (ev)
             {
                 case AudioDelta d: ms.Write(d.Bytes); break;
-                case DoubaoError e: throw new TTSException($"{e.Code}: {e.Message}");
+                case DoubaoError e: throw new TTSException($"[{e.Code}] {e.Message}");
                 case AudioDone: break;
             }
         }
+
+        if (ms.Length == 0)
+        {
+            throw new TTSException("backend returned no audio data (0 bytes)");
+        }
+
         _cache.Put(key, ms.ToArray());
         _cache.TryGet(key, out var path);
+        Godot.GD.Print($"[VR][TTS] cached key={key[..8]} bytes={ms.Length} path={path}");
         return path;
     }
 }
