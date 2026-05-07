@@ -107,11 +107,35 @@ public static class PlayerSlotResolver
             if (player == null) continue;
             var pNetId = ReadUlong(player, "NetId");
             if (pNetId != netId) continue;
+
+            // Player.Creature is the data Creature (model). The Godot visual
+            // is obtained via Creature.GetCreatureNode() which returns the
+            // NCreature scene-tree node. The model itself isn't a Node and
+            // has no position.
             var creature = ReadProp(player, "Creature");
-            if (creature is Node2D n2d && n2d.IsVisibleInTree())
+            if (creature == null) continue;
+
+            var creatureNode = InvokeNoArg(creature, "GetCreatureNode");
+            if (creatureNode is Node2D n2d && n2d.IsInsideTree())
                 return n2d.GlobalPosition;
-            if (creature is Control ctrl && ctrl.IsVisibleInTree())
+            if (creatureNode is Control ctrl && ctrl.IsInsideTree())
                 return ctrl.GlobalPosition + ctrl.Size / 2f;
+        }
+        return null;
+    }
+
+    private static object? InvokeNoArg(object o, string methodName)
+    {
+        var t = o.GetType();
+        for (var ct = t; ct != null && ct != typeof(object); ct = ct.BaseType)
+        {
+            var m = ct.GetMethod(methodName,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+                null, Type.EmptyTypes, null);
+            if (m != null)
+            {
+                try { return m.Invoke(o, null); } catch { return null; }
+            }
         }
         return null;
     }
@@ -174,12 +198,14 @@ public static class PlayerSlotResolver
             var player = ReadProp(s, "Player");
             var netId = player != null ? ReadUlong(player, "NetId") : null;
             var creature = player != null ? ReadProp(player, "Creature") : null;
-            var creatureKind = creature switch
+            var nCreature = creature != null ? InvokeNoArg(creature, "GetCreatureNode") : null;
+            var creatureKind = (creature, nCreature) switch
             {
-                Node2D n2d => $"Node2D@{n2d.GlobalPosition}",
-                Control c => $"Control@{c.GlobalPosition}",
-                null => "null",
-                _ => creature.GetType().Name,
+                (null, _) => "null",
+                (_, Node2D n2d) => $"{creature!.GetType().Name} → NCreature@{n2d.GlobalPosition}",
+                (_, Control c)  => $"{creature!.GetType().Name} → Control@{c.GlobalPosition}",
+                (_, null) => $"{creature!.GetType().Name} (GetCreatureNode returned null)",
+                _ => $"{creature!.GetType().Name} → {nCreature.GetType().Name}",
             };
             var isLocal = (netId.HasValue && localId.HasValue && netId.Value == localId.Value) ? "✓" : "";
             GD.Print($"[VR][Resolver]   [{i}] state={s.GetType().Name} Player.NetId={(netId?.ToString() ?? "?")} {isLocal} Creature={creatureKind}");
