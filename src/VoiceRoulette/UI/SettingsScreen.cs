@@ -66,7 +66,6 @@ public sealed partial class SettingsScreen : CanvasLayer
         ("悄悄话", "whisper"),
         ("大喊", "shout"),
         ("害怕", "scared"),
-        ("指挥", "commanding"),
         ("吵架", "arguing"),
         ("冷漠", "cold"),
     };
