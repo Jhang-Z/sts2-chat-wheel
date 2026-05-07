@@ -226,15 +226,32 @@ public sealed class DoubaoClient : ITTSBackend
     // is what makes the emotion "fuller" — e.g. anger picks up a 暴躁 edge,
     // 委屈 picks up 哭腔. The apiValues stay stable so existing config doesn't
     // break; UI labels can rename freely (e.g. "悲伤" → "无奈").
+    //
+    // For emotions where Doubao doesn't have a named base, we leave baseEmotion
+    // as "" (audio_params doesn't include the field) and rely entirely on the
+    // free-form prompt. Per Doubao docs the prompt alone produces strong tonal
+    // shifts for short single lines.
     private static (string baseEmotion, string? contextText) MapEmotion(string? apiValue) => apiValue switch
     {
-        // Prompts are intentionally over-the-top so the emotion reads on a single short line.
-        // Single line gets ~1s of audio, so we need maximum signal density.
-        "happy" => ("happy",   "用非常开心、活泼俏皮、声音上扬带笑意的语气兴奋地说"),
-        "angry" => ("angry",   "用怒不可遏、暴躁咆哮、几乎要吼出来的语气大声说"),
-        "sad"   => ("annoyed", "用一副两手一摊、摆烂躺平、彻底无所谓、随它去的语气说"),  // UI label is 无奈
-        "sorry" => ("sorry",   "用一种无辜小心翼翼、像是被冤枉了一样的语气轻轻地说"),  // UI label is 委屈
-        _       => ("",        null),  // novel_dialog / null / unknown → neutral
+        // Prompts are intentionally over-the-top so the emotion reads on a single short line
+        // (~1s audio). Maximum signal density per syllable.
+        "happy"       => ("happy",      "用非常开心、活泼俏皮、声音上扬带笑意的语气兴奋地说"),
+        "angry"       => ("angry",      "用怒不可遏、暴躁咆哮、几乎要吼出来的语气大声说"),
+        "sad"         => ("annoyed",    "用一副两手一摊、摆烂躺平、彻底无所谓、随它去的语气说"),  // UI: 无奈
+        "sorry"       => ("sorry",      "用一种无辜小心翼翼、像是被冤枉了一样的语气轻轻地说"),  // UI: 委屈
+
+        "excited"     => ("excited",    "用极度兴奋、像中了奖似的、声音颤抖、上头到不行的语气大声说"),
+        "surprised"   => ("surprised",  "用一副不敢相信、瞪大眼睛、倒抽一口气、惊讶得合不拢嘴的语气说"),
+        "mocking"     => ("",           "用阴阳怪气、夹枪带棒、带点鄙视和嘲笑、皮笑肉不笑的语气说"),
+        "coquettish"  => ("coquettish", "用软糯撒娇、拉长尾音、卖萌求人、嗲声嗲气的语气说"),
+        "whisper"     => ("whisper",    "用压低声音、像是偷偷告诉别人秘密的耳语语气小声说"),
+        "shout"       => ("",           "用扯着嗓子喊、声嘶力竭、十万火急地大吼大叫"),
+        "scared"      => ("",           "用瑟瑟发抖、声音颤抖、害怕到快哭出来、结巴退缩的语气说"),
+        "commanding"  => ("",           "用沉稳坚定、果断有力、像指挥官下达战术命令一样的语气说"),
+        "arguing"     => ("",           "用吵架互怼、不耐烦、夹带火药味、随时要爆发的语气说"),
+        "cold"        => ("",           "用冰冷淡漠、毫不在乎、面无表情、懒得搭理你的语气说"),
+
+        _             => ("",           null),  // novel_dialog / null / unknown → neutral
     };
 
     private byte[] BuildRequestPayload(string text, string voiceType, string? emotion)

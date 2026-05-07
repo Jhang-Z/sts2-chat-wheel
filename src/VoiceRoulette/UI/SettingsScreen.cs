@@ -59,6 +59,16 @@ public sealed partial class SettingsScreen : CanvasLayer
         ("愤怒", "angry"),
         ("无奈", "sad"),
         ("委屈", "sorry"),
+        ("兴奋", "excited"),
+        ("惊讶", "surprised"),
+        ("嘲讽", "mocking"),
+        ("撒娇", "coquettish"),
+        ("悄悄话", "whisper"),
+        ("大喊", "shout"),
+        ("害怕", "scared"),
+        ("指挥", "commanding"),
+        ("吵架", "arguing"),
+        ("冷漠", "cold"),
     };
 
     private static readonly (string label, string voiceId)[] VoiceOptions =
