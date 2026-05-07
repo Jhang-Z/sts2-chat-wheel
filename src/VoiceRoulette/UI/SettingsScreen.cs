@@ -30,7 +30,9 @@ namespace VoiceRoulette.UI;
 //   └─────────────────────────────────────────────────────────────────────┘
 public sealed partial class SettingsScreen : CanvasLayer
 {
-    private const int LineCount = 8;
+    private const int LineCount = 16;          // total slots (2 rings × 8)
+    private const int SectorCount = 8;          // per ring
+    private const int RingCount = 2;
     private const int MaxTextLen = 20;
 
     // ── Palette aliases pulled from StsTheme.MenuXxx (warm earthy) ───────────
@@ -364,59 +366,61 @@ public sealed partial class SettingsScreen : CanvasLayer
     private void BuildWheelPreview(Control parent, float originX, float originY, float size)
     {
         var wheelCenter = new Vector2(originX + size / 2, originY + size / 2);
-        var radius = size / 2 - 50;     // text anchor radius (closer to hub)
-        const float btnW = 110f;
-        const float btnH = 24f;
+        // Two concentric rings — radii tuned so 70px buttons don't overflow
+        // the wheel quadrant on either side at 280px wheelSize.
+        var innerRadius = size * 0.18f;   // ≈ 50px on size=280
+        var outerRadius = size * 0.34f;   // ≈ 95px on size=280
+        const float btnW = 70f;
+        const float btnH = 18f;
 
-        for (var i = 0; i < LineCount; i++)
+        for (var ring = 0; ring < RingCount; ring++)
         {
-            var angle = -Mathf.Pi / 2f + i * (Mathf.Tau / LineCount);
-            var anchor = wheelCenter + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius;
+            var radius = ring == 0 ? innerRadius : outerRadius;
+            for (var s = 0; s < SectorCount; s++)
+            {
+                var slot = ring * SectorCount + s;
+                var angle = -Mathf.Pi / 2f + s * (Mathf.Tau / SectorCount);
+                var anchor = wheelCenter + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius;
 
-            // Per-sector alignment (same scheme as the in-game wheel):
-            //   top (0) / bottom (4)             → centered
-            //   right side  (1, 2, 3)            → left-aligned, anchor at LEFT edge
-            //   left side   (5, 6, 7)            → right-aligned, anchor at RIGHT edge
-            HorizontalAlignment ha;
-            Vector2 btnPos;
-            if (i == 0 || i == 4)
-            {
-                ha = HorizontalAlignment.Center;
-                btnPos = anchor - new Vector2(btnW / 2, btnH / 2);
-            }
-            else if (i >= 1 && i <= 3)
-            {
-                ha = HorizontalAlignment.Left;
-                btnPos = anchor - new Vector2(0, btnH / 2);
-            }
-            else
-            {
-                ha = HorizontalAlignment.Right;
-                btnPos = anchor - new Vector2(btnW, btnH / 2);
-            }
+                HorizontalAlignment ha;
+                Vector2 btnPos;
+                if (s == 0 || s == 4)
+                {
+                    ha = HorizontalAlignment.Center;
+                    btnPos = anchor - new Vector2(btnW / 2, btnH / 2);
+                }
+                else if (s >= 1 && s <= 3)
+                {
+                    ha = HorizontalAlignment.Left;
+                    btnPos = anchor - new Vector2(0, btnH / 2);
+                }
+                else
+                {
+                    ha = HorizontalAlignment.Right;
+                    btnPos = anchor - new Vector2(btnW, btnH / 2);
+                }
 
-            var btn = MakeWheelPreviewButton(ha);
-            btn.Position = btnPos;
-            btn.CustomMinimumSize = new Vector2(btnW, btnH);
-            btn.Size = new Vector2(btnW, btnH);
-            var captured = i;
-            btn.Pressed += () => SelectSlot(captured);
-            parent.AddChild(btn);
-            _slotRows[i] = btn;
+                var btn = MakeWheelPreviewButton(ha);
+                btn.Position = btnPos;
+                btn.CustomMinimumSize = new Vector2(btnW, btnH);
+                btn.Size = new Vector2(btnW, btnH);
+                var captured = slot;
+                btn.Pressed += () => SelectSlot(captured);
+                parent.AddChild(btn);
+                _slotRows[slot] = btn;
+            }
         }
 
         // ── Double-ring hub matching WheelUI ornamental style ────────────────
-        parent.AddChild(MakeDisc(wheelCenter, 26f, BannerBg, 64));
-        parent.AddChild(MakeRing(wheelCenter, 26f, AccentC, 2f, 64));
-        parent.AddChild(MakeRing(wheelCenter, 21f, AccentC, 1f, 64));
-        parent.AddChild(MakeDisc(wheelCenter, 3f, AccentC, 24));
+        parent.AddChild(MakeDisc(wheelCenter, 22f, BannerBg, 64));
+        parent.AddChild(MakeRing(wheelCenter, 22f, AccentC, 2f, 64));
+        parent.AddChild(MakeRing(wheelCenter, 17f, AccentC, 1f, 64));
+        parent.AddChild(MakeDisc(wheelCenter, 2.5f, AccentC, 24));
 
-        // ── Selection arrow OUTSIDE the hub (rotates on select) ─────────────
-        const float tipR  = 38f;
-        const float baseR = 29f;
+        // ── Selection arrow — length follows the selected ring ──────────────
         _previewSelectionArrow = new Polygon2D
         {
-            Polygon = new Vector2[] { new(0, -tipR), new(-7, -baseR), new(7, -baseR) },
+            Polygon = new Vector2[] { new(0, -36f), new(-6, -28f), new(6, -28f) },
             Color = AccentC,
             Position = wheelCenter,
             Visible = false,
@@ -448,7 +452,8 @@ public sealed partial class SettingsScreen : CanvasLayer
         b.AddThemeStyleboxOverride("focus", transparent);
         b.AddThemeColorOverride("font_color", selected ? AccentC : TextC);
         b.AddThemeColorOverride("font_hover_color", AccentC);
-        b.AddThemeFontSizeOverride("font_size", StsTheme.FontBody);
+        // Smaller font fits the tighter 70px-wide preview buttons.
+        b.AddThemeFontSizeOverride("font_size", StsTheme.FontCaption);
     }
 
     // Parchment-tag style banner: dark slate fill, gold left bar, cream text.
@@ -910,12 +915,22 @@ public sealed partial class SettingsScreen : CanvasLayer
         RefreshEditor();
         UpdateLibraryEquipLabel();
 
-        // Rotate the preview arrow to point at the newly-selected sector.
+        // Rotate + reshape arrow to indicate ring + sector. Length stretches
+        // for outer ring, mirroring the in-game wheel's behaviour.
         if (_previewSelectionArrow != null)
         {
-            var step = Mathf.Tau / LineCount;
-            var angle = -Mathf.Pi / 2f + i * step;
+            var ring = i / SectorCount;
+            var sector = i % SectorCount;
+            var step = Mathf.Tau / SectorCount;
+            var angle = -Mathf.Pi / 2f + sector * step;
             _previewSelectionArrow.Rotation = angle + Mathf.Pi / 2f;
+
+            float tipR  = ring == 0 ? 36f : 100f;
+            float baseR = ring == 0 ? 28f : 88f;
+            _previewSelectionArrow.Polygon = new Vector2[]
+            {
+                new(0, -tipR), new(-6, -baseR), new(6, -baseR),
+            };
             _previewSelectionArrow.Visible = true;
         }
     }

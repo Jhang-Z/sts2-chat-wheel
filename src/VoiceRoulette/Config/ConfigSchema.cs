@@ -59,7 +59,9 @@ public sealed class LibraryEntry
     }
 }
 
-// One slot in the 8-sector wheel.
+// One slot in the 16-sector wheel (2 rings × 8 sectors).
+//   slot 0..7   = inner ring (mouse near center)
+//   slot 8..15  = outer ring (mouse pushed further)
 //   Emotion == null  → text-only (bubble shows, no audio)
 //   Emotion != null  → synthesize with that emotion (novel_dialog | happy | angry | sad | sorry)
 public sealed class LineEntry
@@ -70,18 +72,27 @@ public sealed class LineEntry
 
     public static List<LineEntry> Defaults()
     {
-        // Sensible default mix: a few voiced (with matching emotion) and a few text-only,
-        // so users immediately see the toggle in action.
         return new()
         {
-            new() { Id = "slot_0", Text = "我有啥招呢",         Emotion = "sorry" },
-            new() { Id = "slot_1", Text = "我没有输出了",        Emotion = "sad" },
-            new() { Id = "slot_2", Text = "重开一下",            Emotion = "novel_dialog" },
-            new() { Id = "slot_3", Text = "那没办法",            Emotion = "sad" },
-            new() { Id = "slot_4", Text = "你打的什么玩意",      Emotion = "angry" },
-            new() { Id = "slot_5", Text = "求求你了,打点输出吧", Emotion = "sad" },
-            new() { Id = "slot_6", Text = "别慌,有我在!",        Emotion = "novel_dialog" },
-            new() { Id = "slot_7", Text = "好牌,太强了!!!",      Emotion = "happy" },
+            // Inner ring 0..7 — daily reactions / quick chat
+            new() { Id = "slot_0",  Text = "我有啥招呢",          Emotion = "sorry"        },
+            new() { Id = "slot_1",  Text = "我没有输出了",         Emotion = "sad"          },
+            new() { Id = "slot_2",  Text = "重开一下",             Emotion = "novel_dialog" },
+            new() { Id = "slot_3",  Text = "那没办法",             Emotion = "sad"          },
+            new() { Id = "slot_4",  Text = "你打的什么玩意",       Emotion = "angry"        },
+            new() { Id = "slot_5",  Text = "求求你了,打点输出吧",  Emotion = "sad"          },
+            new() { Id = "slot_6",  Text = "别慌,有我在!",         Emotion = "novel_dialog" },
+            new() { Id = "slot_7",  Text = "好牌,太强了!!!",       Emotion = "happy"        },
+
+            // Outer ring 8..15 — tactical coordination
+            new() { Id = "slot_8",  Text = "稳住,稳住",            Emotion = "novel_dialog" },
+            new() { Id = "slot_9",  Text = "我来吸引火力",          Emotion = "novel_dialog" },
+            new() { Id = "slot_10", Text = "先集火 boss",          Emotion = "novel_dialog" },
+            new() { Id = "slot_11", Text = "等我用药水",            Emotion = "sorry"        },
+            new() { Id = "slot_12", Text = "救救我,血不够了",       Emotion = "sorry"        },
+            new() { Id = "slot_13", Text = "干得漂亮!",            Emotion = "happy"        },
+            new() { Id = "slot_14", Text = "就是现在,全力输出!",    Emotion = "happy"        },
+            new() { Id = "slot_15", Text = "撑过这回合就行",        Emotion = "novel_dialog" },
         };
     }
 }

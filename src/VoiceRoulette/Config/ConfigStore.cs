@@ -21,6 +21,9 @@ public sealed class ConfigStore
         Schema = schema;
     }
 
+    // Wheel slot count must match SettingsScreen.LineCount and WheelUI.SectorCount*Rings.
+    private const int WheelSlotCount = 16;
+
     public static ConfigStore Load(string path)
     {
         if (!File.Exists(path))
@@ -37,7 +40,32 @@ public sealed class ConfigStore
         {
             schema = new ConfigSchema();
         }
+        MigrateLines(schema);
         return new ConfigStore(path, schema);
+    }
+
+    /// <summary>
+    /// Old configs (pre 2-ring) had 8 slots. New schema has 16 (inner+outer
+    /// rings). Pad missing slots with the new defaults so old users get the
+    /// outer ring filled out without losing any of their existing 8.
+    /// </summary>
+    private static void MigrateLines(ConfigSchema schema)
+    {
+        if (schema.Lines.Count >= WheelSlotCount) return;
+        var defaults = LineEntry.Defaults();
+        while (schema.Lines.Count < WheelSlotCount)
+        {
+            var i = schema.Lines.Count;
+            var fallback = i < defaults.Count
+                ? defaults[i]
+                : new LineEntry { Id = $"slot_{i}", Text = "" };
+            schema.Lines.Add(new LineEntry
+            {
+                Id = $"slot_{i}",
+                Text = fallback.Text,
+                Emotion = fallback.Emotion,
+            });
+        }
     }
 
     public void Save()

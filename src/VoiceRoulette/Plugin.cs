@@ -187,11 +187,13 @@ public static class Plugin
     // Helpers
     // -------------------------------------------------------------------------
 
+    private const int WheelSlotCount = 16;
+
     private static (IList<string> texts, IList<bool> hasVoice) CurrentPageView(IList<LineEntry> lines)
     {
-        var texts = new List<string>(8);
-        var hasVoice = new List<bool>(8);
-        for (var i = 0; i < 8; i++)
+        var texts = new List<string>(WheelSlotCount);
+        var hasVoice = new List<bool>(WheelSlotCount);
+        for (var i = 0; i < WheelSlotCount; i++)
         {
             if (i < lines.Count)
             {
