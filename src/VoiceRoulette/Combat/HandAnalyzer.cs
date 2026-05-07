@@ -1,10 +1,12 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Players;
+using VoiceRoulette.Net;
 
 namespace VoiceRoulette.Combat;
 
@@ -14,7 +16,6 @@ public sealed partial class HandAnalyzer : Node
 {
     private SceneTree? _tree;
     private Action<string>? _onPing;
-    private byte _localSlot;
 
     // Keywords match cards that APPLY the debuff, not cards that benefit from it.
     // "层易伤" matches "给予2层易伤" but NOT "如果该敌人有易伤状态".
@@ -28,7 +29,11 @@ public sealed partial class HandAnalyzer : Node
 
     public void Start(byte localSlot, Action<string> onPing)
     {
-        _localSlot = localSlot;
+        // localSlot kept in signature for compatibility; we now resolve the
+        // local player by NetId match because state.Players[0] is the host's
+        // player on every peer — using it on a client scans the HOST's hand
+        // and produces phantom "I have Vulnerable" pings on the wrong peer.
+        _ = localSlot;
         _onPing = onPing;
         _tree = (SceneTree)Engine.GetMainLoop();
 
@@ -47,7 +52,7 @@ public sealed partial class HandAnalyzer : Node
         GD.Print($"[VR][HandAnalyzer] TurnStarted fired. side={state.CurrentSide} players={state.Players.Count}");
         // Only fire on the player's side, not the enemy turn.
         if (state.CurrentSide != CombatSide.Player) return;
-        if (_localSlot >= state.Players.Count) return;
+        if (state.Players.Count == 0) return;
 
         // Short delay to let the draw queue populate Hand.Cards.
         // The visual draw animation is much longer but irrelevant — we read data, not UI.
@@ -55,12 +60,28 @@ public sealed partial class HandAnalyzer : Node
         timer.Timeout += () => CheckHand(state);
     }
 
+    private static Player? FindLocalPlayer(CombatState state)
+    {
+        var localId = PlayerSlotResolver.ResolveLocalPlayerId();
+        if (localId is ulong me)
+        {
+            foreach (var p in state.Players)
+                if (p.NetId == me) return p;
+        }
+        // Singleplayer / no co-op: there's only one player and it's us.
+        return state.Players.Count == 1 ? state.Players[0] : null;
+    }
+
     private void CheckHand(CombatState state)
     {
         if (_onPing == null) return;
-        if (_localSlot >= state.Players.Count) return;
 
-        var player = state.Players[_localSlot];
+        var player = FindLocalPlayer(state);
+        if (player == null)
+        {
+            GD.Print("[VR][HandAnalyzer] CheckHand: could not identify local player by NetId — skipping");
+            return;
+        }
         var creature = player.Creature;
         var hand = player.PlayerCombatState?.Hand;
         if (hand == null)
