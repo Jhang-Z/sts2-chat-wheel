@@ -68,10 +68,25 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
         }
     }
 
+    // Track the NetService instance we attached to. STS2 may swap NetService
+    // (lobby → in-game), and our handler stays on the old one — so packets
+    // routed through the new instance vanish silently. When the instance
+    // changes, recreate the bus on the new one.
+    private INetGameService? _attachedNetService;
+
     private void TryRefreshBus()
     {
         var netService = RunManager.Instance?.NetService;
         var connected = netService is { IsConnected: true };
+
+        // Detect NetService swap — if the live instance is no longer the one
+        // our bus is attached to, dispose and re-attach to the live instance.
+        if (_bus != null && netService != null && !ReferenceEquals(netService, _attachedNetService))
+        {
+            GD.Print($"[VR][Net] NetService instance changed (old NetId={_attachedNetService?.NetId.ToString() ?? "?"}, new NetId={netService.NetId}) — re-attaching bus");
+            DisposeBus();
+            // fall through to recreation below
+        }
 
         if (connected && _bus == null)
         {
@@ -79,6 +94,7 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
             {
                 _bus = new Sts2BusNetSync(netService!);
                 _bus.LineReceived += OnAnyLineReceived;
+                _attachedNetService = netService;
                 var localPid = PlayerSlotResolver.ResolveLocalPlayerId();
                 var localSlot = PlayerSlotResolver.ResolveLocalSlot();
                 GD.Print($"[VR][Net] Co-op session detected — switched to Sts2BusNetSync (localPlayerId={(localPid?.ToString() ?? "unknown")} localSlot={localSlot})");
@@ -91,6 +107,7 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
         else if (!connected && _bus != null)
         {
             DisposeBus();
+            _attachedNetService = null;
             PlayerSlotResolver.Reset();
             GD.Print("[VR][Net] Co-op session ended — reverted to LocalNetSync");
         }
