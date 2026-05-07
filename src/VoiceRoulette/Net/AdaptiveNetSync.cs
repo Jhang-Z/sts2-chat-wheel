@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Runs;
 
 namespace VoiceRoulette.Net;
