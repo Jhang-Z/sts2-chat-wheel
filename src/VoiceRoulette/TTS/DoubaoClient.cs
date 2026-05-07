@@ -34,6 +34,11 @@ namespace VoiceRoulette.TTS;
 // Synthesis ends when server emits SessionFinished (event=152).
 public sealed class DoubaoClient : ITTSBackend
 {
+    // Live reference to DoubaoConfig — re-read on each call so settings UI
+    // changes (esp. API key, voice ID) take effect without recreating this
+    // object. Falls back to constructor-captured values when null.
+    private readonly VoiceRoulette.Config.DoubaoConfig? _liveConfig;
+
     private const byte ProtocolVersion = 0b0001;
     private const byte HeaderSize4Bytes = 0b0001;
 
@@ -64,6 +69,7 @@ public sealed class DoubaoClient : ITTSBackend
     private readonly string _apiKey;
     private readonly string _resourceId;
 
+    // Static-snapshot constructor (used by tests + back-compat).
     public DoubaoClient(string endpoint, string apiKey, string resourceId)
     {
         _endpoint = new Uri(endpoint);
@@ -71,11 +77,28 @@ public sealed class DoubaoClient : ITTSBackend
         _resourceId = string.IsNullOrEmpty(resourceId) ? "seed-tts-2.0" : resourceId;
     }
 
+    // Live-config constructor — preferred in production. Each call to
+    // SynthesizeAsync re-reads the current key/endpoint/resource so the
+    // settings page can update them without restarting the mod.
+    public DoubaoClient(VoiceRoulette.Config.DoubaoConfig config)
+        : this(config.Endpoint, config.ApiKey, config.ResourceId)
+    {
+        _liveConfig = config;
+    }
+
+    private string ResolveEndpoint()  => _liveConfig?.Endpoint   ?? _endpoint.ToString();
+    private string ResolveApiKey()    => _liveConfig?.ApiKey     ?? _apiKey;
+    private string ResolveResourceId()=> string.IsNullOrEmpty(_liveConfig?.ResourceId) ? _resourceId : _liveConfig!.ResourceId;
+
     public async IAsyncEnumerable<DoubaoEvent> SynthesizeAsync(
         string text, string voiceType, string? emotion = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(_apiKey))
+        var apiKey = ResolveApiKey();
+        var resourceId = ResolveResourceId();
+        var endpointUri = new Uri(ResolveEndpoint());
+
+        if (string.IsNullOrEmpty(apiKey))
         {
             Godot.GD.PrintErr("[VR][TTS] missing API key — set doubao.apiKey in data/config.jsonc");
             yield return new DoubaoError("missing_api_key",
@@ -85,14 +108,14 @@ public sealed class DoubaoClient : ITTSBackend
 
         using var ws = new ClientWebSocket();
         var requestId = Guid.NewGuid().ToString();
-        ws.Options.SetRequestHeader("X-Api-Key", _apiKey);
-        ws.Options.SetRequestHeader("X-Api-Resource-Id", _resourceId);
+        ws.Options.SetRequestHeader("X-Api-Key", apiKey);
+        ws.Options.SetRequestHeader("X-Api-Resource-Id", resourceId);
         ws.Options.SetRequestHeader("X-Api-Request-Id", requestId);
 
-        Godot.GD.Print($"[VR][TTS] connect → {_endpoint.Host}{_endpoint.AbsolutePath} resource={_resourceId} reqid={requestId[..8]}");
+        Godot.GD.Print($"[VR][TTS] connect → {endpointUri.Host}{endpointUri.AbsolutePath} resource={resourceId} reqid={requestId[..8]}");
 
         Exception? connectEx = null;
-        try { await ws.ConnectAsync(_endpoint, ct).ConfigureAwait(false); }
+        try { await ws.ConnectAsync(endpointUri, ct).ConfigureAwait(false); }
         catch (Exception ex) { connectEx = ex; }
 
         if (connectEx != null)

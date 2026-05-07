@@ -1,211 +1,202 @@
-# StS2 Chat Wheel
+# StS2 Chat Wheel — 使用教程
 
-Dota 2-style radial chat wheel with Doubao TTS for Slay the Spire 2 co-op. Hold a hotkey, pick one of 8 lines, and your character speaks it aloud — with multiple emotion presets per line — in front of your teammates.
-
-> **English / [中文](#中文)**
-
----
-
-## ✨ Features
-
-- 🎯 **Hold `Y`** to open an 8-sector radial wheel and broadcast a voice line to teammates
-- 🗣️ **Doubao TTS 2.0** with 5 emotion presets (正常 / 开心 / 愤怒 / 无奈 / 委屈) and 5 voice characters (爽快思思 / 猪八戒 / 熊二 / 猴哥 / 海绵宝宝)
-- 💬 **In-game speech bubbles** rendered with the game's own `NSpeechBubbleVfx` so they match StS2's visual language exactly
-- 📚 **Editable phrase library** — 36 presets shipped, plus custom add/delete in-game
-- 🃏 **Auto status pings**:
-  - `Cmd+Click` (Mac) / `Ctrl+Click` (Windows) on a potion or buff → "我有【XXX】"
-  - At turn start, if your hand has a Vulnerable / Weak card → auto-broadcast "我有【易伤】牌"
-- 🎵 **Smart caching** — every (text, voice, emotion) tuple cached locally; same line never hits Doubao twice
-- 🔧 **Live settings** — rebind hotkeys, swap voices, edit phrases, all without leaving the game
+> Dota 风格的 8 扇区聊天轮盘 + 豆包 TTS 语音合成，适用于《杀戮尖塔 2》联机模式。  
+> 按住 `Y` 拨动鼠标选词条，松手发送——队友能同时看到游戏内气泡和听到声音。
 
 ---
 
-## 📦 For Players (Just Want to Use It)
+## 目录
 
-### Step 1 — Find your mods folder
+1. [安装 Mod](#1-安装-mod)
+   - [Windows](#windows)
+   - [macOS](#macos)
+2. [启用 Mod](#2-启用-mod)
+3. [配置豆包 TTS 语音（可选）](#3-配置豆包-tts-语音可选)
+4. [开始使用](#4-开始使用)
+5. [设置页说明](#5-设置页说明)
+6. [常见问题](#6-常见问题)
 
-| OS | Path |
-|---|---|
-| macOS | `~/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app/Contents/MacOS/mods/` |
-| Windows | `C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\mods\` |
+---
 
-> **Tip**: Steam → right-click the game → Manage → Browse local files, then navigate to `mods/` (create it if missing).
+## 1. 安装 Mod
 
-### Step 2 — Install
+### Windows
 
-1. Download `sts2_chat_wheel-0.2.0.zip` from the [Releases](../../releases) page
-2. Unzip it — you'll get a folder named `sts2_chat_wheel`
-3. Move the entire `sts2_chat_wheel` folder into your `mods/` folder
+**第一步：找到 mods 文件夹**
 
-The result should look like:
+打开文件资源管理器，导航到：
+
+```
+C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\mods\
+```
+
+> 找不到？在 Steam 库中右键游戏 → **管理** → **浏览本地文件**，然后手动建一个 `mods` 文件夹。
+
+**第二步：下载并解压**
+
+1. 前往本项目的 [Releases](../../releases) 页面
+2. 下载 `sts2_chat_wheel-0.2.0.zip`
+3. 右键 zip → **全部解压**，得到一个 `sts2_chat_wheel` 文件夹
+4. 把整个 `sts2_chat_wheel` 文件夹（不是 zip 里面的文件！）拖进 `mods\` 目录
+
+安装后目录结构应该是这样：
+
+```
+mods\
+└── sts2_chat_wheel\
+    ├── manifest.json
+    ├── VoiceRoulette.dll
+    └── lines.default.json
+```
+
+---
+
+### macOS
+
+**第一步：开启 Rosetta（Apple Silicon Mac 必须）**
+
+1. 打开 **Finder**
+2. 前往 **应用程序 → Steam**，找到游戏，或在 Steam 中右键游戏 → **管理** → **浏览本地文件**
+3. 在 Finder 中找到 `SlayTheSpire2` 应用程序文件（.app）
+4. 右键 → **显示简介**
+5. 勾选 **使用 Rosetta 打开**，然后关闭窗口
+
+> ⚠️ 跳过这步游戏和 Mod 可能无法正常运行。
+
+**第二步：找到 mods 文件夹**
+
+在 Finder 菜单栏点击 **前往 → 前往文件夹**（快捷键 `⌘ Shift G`），粘贴以下路径：
+
+```
+~/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app/Contents/MacOS/mods/
+```
+
+如果 `mods` 文件夹不存在，手动新建一个同名文件夹。
+
+**第三步：下载并解压**
+
+1. 前往本项目的 [Releases](../../releases) 页面
+2. 下载 `sts2_chat_wheel-0.2.0.zip`
+3. 双击 zip 解压，得到一个 `sts2_chat_wheel` 文件夹
+4. 把整个 `sts2_chat_wheel` 文件夹拖进刚才打开的 `mods/` 目录
+
+安装后目录结构应该是这样：
 
 ```
 mods/
 └── sts2_chat_wheel/
     ├── manifest.json
-    ├── sts2_chat_wheel.dll
-    └── data/
-        └── lines.default.jsonc
-```
-
-### Step 3 — macOS only: enable Rosetta
-
-Right-click `SlayTheSpire2` in Finder → Get Info → check **Open using Rosetta**.
-
-### Step 4 — Launch and enable
-
-Launch the game, open the Mod menu, and enable **StS2 Chat Wheel**.
-
-### Step 5 — Configure Doubao TTS (required for voice)
-
-Without an API key the chat wheel still works as **text-only** bubbles. To enable voice:
-
-1. Sign up at [volcengine.com](https://www.volcengine.com/) → activate **豆包语音合成模型 2.0** (Doubao TTS 2.0)
-2. Authorize the voices you want to use under **音色库** (e.g. 爽快思思)
-3. Copy your API Key from **API Key 管理** in the new console
-4. Launch the game once so the mod creates `mods/sts2_chat_wheel/data/config.jsonc`
-5. Open that file and paste the Key into `doubao.apiKey`
-6. Restart the game
-
-> The first time you say a line, the mod calls Doubao to synthesize it (~500ms). All subsequent uses of that exact (text, voice, emotion) tuple play instantly from local cache — Doubao isn't called again.
-
----
-
-## 🎮 Usage
-
-| Action | Effect |
-|---|---|
-| **Hold `Y`** | Open the chat wheel |
-| Move mouse to a sector | Highlight that line; full text shows below the hub |
-| **Release `Y`** | Send + speak the line to all teammates |
-| `Esc` while holding `Y` | Cancel without sending |
-| **Press `;`** | Open settings (rebindable to `N`, `;`, etc. in-game) |
-| `Cmd/Ctrl + Click` a potion/buff | Announce "我有【火焰药水】" or "我处于【力量2】的状态" |
-
-### Settings Page (press `;`)
-
-- **轮盘配置 tab**: Click any of the 8 mini-wheel positions on the left to select it. Then either:
-  - Edit text/voice/emotion in the editor below, OR
-  - **Click any phrase from the 语音库 on the right → that phrase swaps with the selected slot**
-- **设置 tab**: Rebind hotkeys, switch voice character
-
-Hotkeys stop firing while a text input has focus, so you can safely type `Y` or `;` into a textbox without opening anything.
-
----
-
-## ⚙️ Customization
-
-`mods/sts2_chat_wheel/data/config.jsonc` (auto-generated on first launch):
-
-| Key | Description | Example |
-|---|---|---|
-| `hotkey` | Key to open the wheel | `"Y"` |
-| `settingsHotkey` | Key to open settings | `"Semicolon"` |
-| `defaultVoice` | Doubao voice ID | `"zh_female_shuangkuaisisi_uranus_bigtts"` |
-| `doubao.apiKey` | Your Volcengine API Key | `"abc123..."` |
-| `doubao.resourceId` | Doubao service tier | `"seed-tts-2.0"` |
-| `cooldown.perSend` | Seconds between sends | `0.5` |
-| `lines[i].text` | Wheel sector text | `"好牌！"` |
-| `lines[i].emotion` | Emotion (`null` = no voice) | `"happy"` / `"angry"` / `"sad"` / `"sorry"` / `"novel_dialog"` |
-| `library[i]` | Phrase library entries | (managed in the settings UI) |
-
----
-
-## 🛠️ For Developers (Build from Source)
-
-### Prerequisites
-
-- **.NET 9 SDK** ([download](https://dotnet.microsoft.com/download/dotnet/9.0))
-- A working installation of **Slay the Spire 2** (the build needs to reference 3 of the game's DLLs, which can't be redistributed)
-
-### Build steps
-
-```bash
-git clone <this-repo>
-cd sts2-chat-wheel
-
-# Step 1: Copy the game's runtime DLLs into ./lib/
-# (auto-detects standard Steam paths on macOS / Linux / Windows)
-./scripts/copy-libs.sh           # macOS / Linux
-.\scripts\copy-libs.ps1          # Windows PowerShell
-
-# Step 2: Build + install to your local mods folder
-./scripts/install-local.sh       # macOS / Linux
-.\scripts\install-local.ps1      # Windows PowerShell
-
-# Or, package a distributable zip → dist/
-./scripts/package.sh             # macOS / Linux
-.\scripts\package.ps1            # Windows PowerShell
-```
-
-### If the auto-detect fails
-
-```bash
-# macOS / Linux
-GAME_DIR="/path/to/data_sts2_macos_arm64" ./scripts/copy-libs.sh
-STS2_MODS_DIR="/path/to/Slay the Spire 2/mods" ./scripts/install-local.sh
-```
-
-```powershell
-# Windows PowerShell
-$env:GAME_DIR="D:\path\to\data_sts2_windows_x86_64"
-$env:STS2_MODS_DIR="D:\path\to\Slay the Spire 2\mods"
-.\scripts\install-local.ps1
-```
-
-### Run tests
-
-```bash
-dotnet test tests/VoiceRoulette.Tests/VoiceRoulette.Tests.csproj
-```
-
-> Tests that touch `Godot.GD.*` are marked `Skip` because GodotSharp's native bindings only exist inside the running game. Pure-logic tests (config, cooldown, audio cache key, wire-message serialization, line registry, parser) all run normally — expect ~25 passing, ~7 skipped.
-
-### Project structure
-
-```
-sts2-chat-wheel/
-├── src/VoiceRoulette/         # mod source (net9.0, AssemblyName=VoiceRoulette)
-│   ├── Plugin.cs              # entry-point + dependency wiring
-│   ├── UI/                    # WheelUI / SettingsScreen / BubbleOverlay / StsTheme / StsFonts
-│   ├── TTS/                   # DoubaoClient (V3 binary protocol) + AudioCache + TTSPipeline
-│   ├── Audio/                 # MP3 playback via Godot AudioStreamPlayer
-│   ├── Combat/HandAnalyzer.cs # turn-start hand scan for 易伤 / 虚弱 cards
-│   ├── Input/                 # InputCapture (Y / ; hotkeys) + StatusPinger (Cmd+Click)
-│   ├── Lines/                 # Line model + LineLibrary preset phrases
-│   ├── Net/                   # WireMessage + Sts2BusNetSync (multiplayer)
-│   ├── Dispatch/              # Cooldown + Dispatcher
-│   └── Config/                # ConfigSchema + ConfigStore (config.jsonc)
-├── tests/VoiceRoulette.Tests/ # xunit + FluentAssertions
-├── lib/                       # game DLLs go here (gitignored — run copy-libs)
-├── scripts/                   # copy-libs / install-local / package, both .sh and .ps1
-└── design.md                  # visual-design tokens reference (StsColors palette, fonts)
+    ├── VoiceRoulette.dll
+    └── lines.default.json
 ```
 
 ---
 
-## 📝 License
+## 2. 启用 Mod
 
-Source code: MIT-style (re-use freely, no warranty).
-Game DLLs in `lib/` are NOT redistributed — each developer pulls their own copy from their legally-purchased Slay the Spire 2 install.
+1. 启动游戏（第一次运行会比平时慢一点，Mod 在初始化）
+2. 在游戏主界面找到 **Mod** 菜单
+3. 找到 **StS2 Chat Wheel**，点击启用
+4. 重启游戏使其生效
 
-## 🐛 Known limitations
-
-- 海绵宝宝 (`liangsangmengzai`) voice ID is included in the picker but verify it's authorized in your Volcengine 音色库 first, or you'll get a `45000000` permission error
-- TTS uses your Volcengine quota (free tier ships ~20K characters — plenty for testing); production runs cost a few yuan per few thousand sends
-- Multiplayer broadcast rides on the in-game RPC bus; if the bus shape changes in a future game patch, only local audio + bubble continue to work until the mod is updated
+启用后进入任意联机局，按 `Y` 就能看到聊天轮盘弹出。
 
 ---
 
-## 中文
+## 3. 配置豆包 TTS 语音（可选）
 
-道塔风格的 8 扇区聊天轮盘，配豆包 TTS（5 种情感、5 个角色）和原生游戏内气泡。按住 `Y` 选词条松开发送，队友能听到声音也能看到气泡。
+**不配置 API Key 也能用**——Mod 会以纯文字气泡模式运行，队友能看到文字但没有语音。
 
-完整文档见上方英文版——命令和路径在两边都通用。
+如果你想开启语音功能，按以下步骤配置：
 
-简短安装：
-1. 从 Releases 下载 `sts2_chat_wheel-0.2.0.zip`，解压后整个 `sts2_chat_wheel` 文件夹放进游戏的 `mods/` 目录
-2. macOS 用户右键游戏 → 显示简介 → 勾选「使用 Rosetta 打开」
-3. 启动游戏 → Mod 菜单启用
-4. 想要 TTS 的话：去 [火山引擎](https://www.volcengine.com/) 拿 API Key 填到 `mods/sts2_chat_wheel/data/config.jsonc` 的 `doubao.apiKey`
-5. 按 `Y` 试试
+### 第一步：注册火山引擎账号
+
+前往 [volcengine.com](https://www.volcengine.com/)，注册账号并完成实名认证。
+
+### 第二步：开通豆包 TTS 服务
+
+1. 登录后进入控制台，搜索 **语音合成** 或直接进入 **智能语音 → 语音合成**
+2. 找到 **豆包语音合成模型 2.0（Doubao TTS 2.0）**，点击开通
+3. 进入 **音色库**，找到你想使用的音色并点击 **授权**（推荐先授权「爽快思思·女声」）
+
+> 火山引擎提供免费额度（约 20,000 字符），足够日常测试使用。
+
+### 第三步：获取 API Key
+
+1. 在控制台右上角或左侧菜单找到 **API Key 管理**（新版控制台路径：**账号 → 密钥管理**）
+2. 点击 **新建 API Key**，复制生成的 Key（格式类似 `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`）
+
+### 第四步：在游戏内填写 API Key
+
+1. 进入游戏，按 **`;`** 打开 Mod 设置页
+2. 点击顶部的 **设置** 标签页
+3. 找到 **豆包 TTS API 密钥** 区域，把 Key 粘贴进输入框
+4. 点击 **测试连接** 按钮，看到 `✓ 连接成功` 即表示 Key 有效
+5. 点击右下角 **保存**
+
+下次进入游戏后语音功能自动生效。
+
+> **第一次说某句话时**，Mod 会调用豆包 API 合成音频（约 500ms 延迟），合成后自动缓存到本地。同样的（文字 + 音色 + 情感）组合只合成一次，之后都是本地秒播。
+
+---
+
+## 4. 开始使用
+
+| 操作 | 效果 |
+|------|------|
+| **按住 `Y`** | 打开 8 扇区聊天轮盘 |
+| 按住 `Y` 时移动鼠标 | 高亮对应扇区，轮盘中央显示完整文本 |
+| **松开 `Y`** | 发送该词条 + 播放语音，队友同时看到气泡 |
+| 按住 `Y` 时按 `Esc` | 取消，不发送 |
+| **按 `;`** | 打开设置页（可在设置里改绑到其他键） |
+| **`Ctrl`（Win）/ `Cmd`（Mac）+ 点击**药水或增益 | 自动广播「我有【火焰药水】」「我处于【力量+2】的状态」 |
+
+---
+
+## 5. 设置页说明
+
+按 **`;`** 打开设置，有两个标签页：
+
+### 轮盘配置
+
+左侧显示 8 个槽位组成的轮盘预览。点击某个槽位（默认选中第 1 个）后可以：
+
+- 在下方 **编辑** 区域直接改文字（最多 20 字）
+- 开关 **语音** 开关，并选择情感（正常 / 开心 / 愤怒 / 无奈 / 委屈）
+- 点击 **▶ 试听** 预览当前语音效果
+
+右侧是 **语音库**，包含 36 条预设词条。点击任意词条，它会直接写入当前选中的槽位（若槽位有内容则互换）。也可以在底部输入框添加自定义词条。
+
+### 设置
+
+- **快捷键**：点击按钮后按一个键来重绑，`Esc` 取消
+- **音色**：切换豆包发音角色（爽快思思 / 猪八戒 / 熊二 / 猴哥 / 海绵宝宝）
+- **豆包 TTS API 密钥**：填写 API Key 并可点击「测试连接」验证有效性
+
+修改完成后点击 **保存** 立即生效，无需重启游戏。
+
+---
+
+## 6. 常见问题
+
+**Q：按 `Y` 没有反应？**  
+A：确认 Mod 已在游戏 Mod 菜单中启用，且是在对局中（大厅界面轮盘不会弹出）。
+
+**Q：macOS 上游戏崩溃或 Mod 不加载？**  
+A：检查是否已勾选 **使用 Rosetta 打开**（参见第 1 节 macOS 部分）。
+
+**Q：有语音但队友听不到？**  
+A：语音在本地播放，气泡才是广播给队友的。如果队友看不到气泡，检查网络连接是否正常，以及对方是否也安装了 Mod（气泡通过游戏内 RPC 发送，双方都需要有 Mod）。
+
+**Q：测试连接提示 WebSocket 错误？**  
+A：通常是 API Key 无效或未开通对应服务。回到火山引擎控制台确认 Key 状态，以及豆包 TTS 2.0 服务是否已开通并授权了对应音色。
+
+**Q：语音有约 0.5 秒延迟？**  
+A：第一次合成某句话需要调用豆包 API，之后同样的（文字 + 音色 + 情感）都从本地缓存播放，无延迟。
+
+**Q：怎么修改轮盘默认词条？**  
+A：按 `;` 打开设置 → 轮盘配置，直接在游戏内修改并保存即可。
+
+---
+
+*当前版本：0.2.0*

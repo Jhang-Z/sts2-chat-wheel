@@ -123,10 +123,16 @@ public sealed partial class SettingsScreen : CanvasLayer
     private OptionButton? _addEmotion;
     private Button? _addButton;
 
-    // Tab 2: hotkeys + voice
+    // Tab 2: hotkeys + voice + API key
     private OptionButton? _voicePicker;
     private Button? _wheelKeyButton;
     private Button? _settingsKeyButton;
+    private LineEdit? _apiKeyEdit;
+    private Label? _apiTestStatusLabel;
+    private Button? _testApiBtn;
+    private string _stagedApiKey = "";
+    private volatile bool _apiTestPending;
+    private (bool ok, string msg) _apiTestResult;
 
     // ── Staged state ────────────────────────────────────────────────────────
     private readonly LineEntry[] _stagedLines = new LineEntry[LineCount];
@@ -399,47 +405,18 @@ public sealed partial class SettingsScreen : CanvasLayer
             _slotRows[i] = btn;
         }
 
-        // ── Round center hub: dim disc + gold ring + tiny gold dot ──────────
-        const float hubR = 18f;
-        const int segs = 48;
-        var hubPts = new Vector2[segs];
-        for (var k = 0; k < segs; k++)
-        {
-            var a = k * Mathf.Tau / segs;
-            hubPts[k] = wheelCenter + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * hubR;
-        }
-        parent.AddChild(new Polygon2D { Polygon = hubPts, Color = SectionBg });
-
-        var hubBorder = new Line2D
-        {
-            DefaultColor = AccentC,
-            Width = 1.5f,
-            Antialiased = true,
-            Closed = true,
-        };
-        foreach (var p in hubPts) hubBorder.AddPoint(p);
-        parent.AddChild(hubBorder);
-
-        // Tiny center dot
-        var dotPts = new Vector2[16];
-        for (var k = 0; k < 16; k++)
-        {
-            var a = k * Mathf.Tau / 16;
-            dotPts[k] = wheelCenter + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * 2f;
-        }
-        parent.AddChild(new Polygon2D { Polygon = dotPts, Color = AccentC });
+        // ── Double-ring hub matching WheelUI ornamental style ────────────────
+        parent.AddChild(MakeDisc(wheelCenter, 26f, BannerBg, 64));
+        parent.AddChild(MakeRing(wheelCenter, 26f, AccentC, 2f, 64));
+        parent.AddChild(MakeRing(wheelCenter, 21f, AccentC, 1f, 64));
+        parent.AddChild(MakeDisc(wheelCenter, 3f, AccentC, 24));
 
         // ── Selection arrow OUTSIDE the hub (rotates on select) ─────────────
-        const float tipR  = 30f;
-        const float baseR = 22f;
+        const float tipR  = 38f;
+        const float baseR = 29f;
         _previewSelectionArrow = new Polygon2D
         {
-            Polygon = new Vector2[]
-            {
-                new( 0, -tipR),    // tip outward
-                new(-5, -baseR),   // left base
-                new( 5, -baseR),   // right base
-            },
+            Polygon = new Vector2[] { new(0, -tipR), new(-7, -baseR), new(7, -baseR) },
             Color = AccentC,
             Position = wheelCenter,
             Visible = false,
@@ -471,7 +448,7 @@ public sealed partial class SettingsScreen : CanvasLayer
         b.AddThemeStyleboxOverride("focus", transparent);
         b.AddThemeColorOverride("font_color", selected ? AccentC : TextC);
         b.AddThemeColorOverride("font_hover_color", AccentC);
-        b.AddThemeFontSizeOverride("font_size", StsTheme.FontCaption);
+        b.AddThemeFontSizeOverride("font_size", StsTheme.FontBody);
     }
 
     // Parchment-tag style banner: dark slate fill, gold left bar, cream text.
@@ -815,6 +792,43 @@ public sealed partial class SettingsScreen : CanvasLayer
         _voicePicker.ItemSelected += idx => _stagedVoiceId = VoiceOptions[Math.Clamp(idx, 0, VoiceOptions.Length - 1)].voiceId;
         StyleOptionButton(_voicePicker);
         container.AddChild(_voicePicker);
+
+        // Section: Doubao TTS API Key
+        BuildSectionBanner(container, "豆包 TTS API 密钥（Doubao 语音合成）", new Vector2(0, 256), 700);
+
+        _apiKeyEdit = new LineEdit
+        {
+            Position = new Vector2(0, 296),
+            Size = new Vector2(440, 36),
+            PlaceholderText = "粘贴 X-Api-Key（格式：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）",
+            Secret = true,
+            SecretCharacter = "•",
+        };
+        StyleLineEdit(_apiKeyEdit);
+        _apiKeyEdit.TextChanged += t => _stagedApiKey = t;
+        container.AddChild(_apiKeyEdit);
+
+        var revealBtn = MakeButton("👁", SectionBg, RowBgSel);
+        revealBtn.Position = new Vector2(448, 296);
+        revealBtn.CustomMinimumSize = new Vector2(36, 36);
+        revealBtn.Pressed += () => { if (_apiKeyEdit != null) _apiKeyEdit.Secret = !_apiKeyEdit.Secret; };
+        container.AddChild(revealBtn);
+
+        _testApiBtn = MakeButton("测试连接", SectionBg, RowBgSel);
+        _testApiBtn.Position = new Vector2(492, 296);
+        _testApiBtn.CustomMinimumSize = new Vector2(104, 36);
+        _testApiBtn.Pressed += OnTestApiKey;
+        container.AddChild(_testApiBtn);
+
+        _apiTestStatusLabel = MakeLabel("", TextDimC, StsTheme.FontCaption);
+        _apiTestStatusLabel.Position = new Vector2(0, 340);
+        _apiTestStatusLabel.Size = new Vector2(620, 22);
+        container.AddChild(_apiTestStatusLabel);
+
+        var apiHint = MakeLabel("在火山引擎控制台 console.volcengine.com → 密钥管理 中生成 API Key", TextDimC, StsTheme.FontCaption);
+        apiHint.Position = new Vector2(0, 364);
+        apiHint.Size = new Vector2(700, 20);
+        container.AddChild(apiHint);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -988,6 +1002,10 @@ public sealed partial class SettingsScreen : CanvasLayer
             _voicePicker.Selected = idx;
         }
 
+        _stagedApiKey = _config.Schema.Doubao.ApiKey ?? "";
+        if (_apiKeyEdit != null) { _apiKeyEdit.Text = _stagedApiKey; }
+        if (_apiTestStatusLabel != null) _apiTestStatusLabel.Text = "";
+
         var lines = _config.Schema.Lines;
         for (var i = 0; i < LineCount; i++)
         {
@@ -1013,9 +1031,10 @@ public sealed partial class SettingsScreen : CanvasLayer
     private void OnSave()
     {
         if (_config == null) return;
-        _config.Schema.Hotkey         = _stagedWheelKey.ToString();
-        _config.Schema.SettingsHotkey = _stagedSettingsKey.ToString();
-        _config.Schema.DefaultVoice   = _stagedVoiceId;
+        _config.Schema.Hotkey           = _stagedWheelKey.ToString();
+        _config.Schema.SettingsHotkey   = _stagedSettingsKey.ToString();
+        _config.Schema.DefaultVoice     = _stagedVoiceId;
+        _config.Schema.Doubao.ApiKey    = _stagedApiKey.Trim();
 
         var lines = _config.Schema.Lines;
         while (lines.Count < LineCount)
@@ -1060,7 +1079,56 @@ public sealed partial class SettingsScreen : CanvasLayer
         var hasKey = !string.IsNullOrWhiteSpace(_config.Schema.Doubao.ApiKey);
         _apiKeyWarning.Text = hasKey
             ? ""
-            : "⚠ 未配置 Doubao API Key — 语音功能不会工作。请在 data/config.jsonc 里填 doubao.apiKey。";
+            : "⚠ 未配置豆包 TTS API Key — 请在「设置」标签页填写后保存，语音功能才能正常工作。";
+    }
+
+    private void OnTestApiKey()
+    {
+        if (_apiKeyEdit == null || _apiTestStatusLabel == null || _config == null) return;
+        var key = (_apiKeyEdit.Text ?? "").Trim();
+        if (string.IsNullOrEmpty(key))
+        {
+            _apiTestStatusLabel.Text = "请先输入 API Key";
+            _apiTestStatusLabel.AddThemeColorOverride("font_color", WarningC);
+            return;
+        }
+        _apiTestStatusLabel.Text = "连接中，请稍候…";
+        _apiTestStatusLabel.AddThemeColorOverride("font_color", TextDimC);
+        if (_testApiBtn != null) _testApiBtn.Disabled = true;
+        _apiTestPending = false;
+
+        var endpoint  = _config.Schema.Doubao.Endpoint;
+        var resource  = _config.Schema.Doubao.ResourceId;
+        _ = System.Threading.Tasks.Task.Run(async () =>
+        {
+            bool ok;
+            string msg;
+            try
+            {
+                using var ws  = new System.Net.WebSockets.ClientWebSocket();
+                ws.Options.SetRequestHeader("X-Api-Key", key);
+                ws.Options.SetRequestHeader("X-Api-Resource-Id", resource);
+                using var cts = new System.Threading.CancellationTokenSource(System.TimeSpan.FromSeconds(6));
+                await ws.ConnectAsync(new System.Uri(endpoint), cts.Token);
+                await ws.CloseAsync(
+                    System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "",
+                    System.Threading.CancellationToken.None);
+                ok  = true;
+                msg = "✓ 连接成功，API Key 有效";
+            }
+            catch (System.Net.WebSockets.WebSocketException wex)
+            {
+                ok  = false;
+                msg = $"✗ WebSocket 错误（Key 可能无效）：{wex.Message}";
+            }
+            catch (System.Exception ex)
+            {
+                ok  = false;
+                msg = $"✗ 连接失败：{ex.Message}";
+            }
+            _apiTestResult  = (ok, msg);
+            _apiTestPending = true;
+        });
     }
 
     private void UpdateStatus(string msg)
@@ -1082,7 +1150,22 @@ public sealed partial class SettingsScreen : CanvasLayer
 
     private void OnTick()
     {
-        if (!Visible || _capturingSlot < 0) return;
+        if (!Visible) return;
+
+        // Flush pending API test result (set from background Task)
+        if (_apiTestPending)
+        {
+            _apiTestPending = false;
+            var (ok, resultMsg) = _apiTestResult;
+            if (_apiTestStatusLabel != null)
+            {
+                _apiTestStatusLabel.Text = resultMsg;
+                _apiTestStatusLabel.AddThemeColorOverride("font_color", ok ? AccentC : RedAccentC);
+            }
+            if (_testApiBtn != null) _testApiBtn.Disabled = false;
+        }
+
+        if (_capturingSlot < 0) return;
         if (Godot.Input.IsKeyPressed(Key.Escape))
         {
             _capturingSlot = -1;
@@ -1332,6 +1415,28 @@ public sealed partial class SettingsScreen : CanvasLayer
         b.AddThemeColorOverride("font_hover_color", new Color("FFFFFF"));
         b.AddThemeFontSizeOverride("font_size", StsTheme.FontBody);
         return b;
+    }
+
+    private static Polygon2D MakeDisc(Vector2 c, float r, Color color, int segs)
+    {
+        var pts = new Vector2[segs];
+        for (var i = 0; i < segs; i++)
+        {
+            var a = i * Mathf.Tau / segs;
+            pts[i] = c + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * r;
+        }
+        return new Polygon2D { Polygon = pts, Color = color };
+    }
+
+    private static Line2D MakeRing(Vector2 c, float r, Color color, float width, int segs)
+    {
+        var line = new Line2D { DefaultColor = color, Width = width, Antialiased = true, Closed = true };
+        for (var i = 0; i < segs; i++)
+        {
+            var a = i * Mathf.Tau / segs;
+            line.AddPoint(c + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * r);
+        }
+        return line;
     }
 
     private static Button MakeButton(string text, Color normal, Color hover)
