@@ -33,11 +33,12 @@ public sealed partial class BubbleOverlay : CanvasLayer
     private const float FallbackAnchorY = 90f;
     private const float FallbackRowH = 38f;
 
-    // Per-slot color tint applied to the bubble. Maps to VfxColor enum values
-    // available in StsColors palette.
+    // All bubbles use the same color — speaker is identified by which
+    // character the bubble points at, so per-slot tinting only added
+    // visual noise.
     private static readonly VfxColor[] SlotColors =
     {
-        VfxColor.Cyan, VfxColor.Green, VfxColor.Orange, VfxColor.Purple,
+        VfxColor.Cyan, VfxColor.Cyan, VfxColor.Cyan, VfxColor.Cyan,
     };
 
     private readonly Dictionary<byte, NSpeechBubbleVfx> _activePerSlot = new();
