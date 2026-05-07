@@ -69,31 +69,11 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
         _netService.RegisterMessageHandler(_handler);
         Godot.GD.Print($"[VR][Net] Sts2BusNetSync ready — handler registered for {typeof(VoiceRouletteMessage).Name}");
 
-        TrySelfLoopbackTest();
-    }
-
-    /// <summary>
-    /// Diagnostic: try the SendMessage(T, ulong) overload with our own NetId
-    /// to see if the bus loops back to self. If our HandleMessage fires with
-    /// a known marker text, we know the entire send→receive pipeline works
-    /// for our type, and the issue with teammates not receiving must be in
-    /// the network/peer-discovery layer.
-    /// </summary>
-    private void TrySelfLoopbackTest()
-    {
-        try
-        {
-            var myId = _netService.NetId;
-            Godot.GD.Print($"[VR][Net] self-loopback test: sending to NetId={myId}");
-            var probe = new WireMessage(WireMessage.CurrentVersion, 0, "__VR_LOOPBACK_PROBE__", "", 0, null);
-            // Try the targeted overload — interpretation may vary (recipient vs exclude).
-            try { _netService.SendMessage(new VoiceRouletteMessage(probe), myId); }
-            catch (Exception ex) { Godot.GD.Print($"[VR][Net] targeted SendMessage threw: {ex.GetType().Name}"); }
-        }
-        catch (Exception ex)
-        {
-            Godot.GD.PrintErr($"[VR][Net] self-loopback test failed to set up: {ex.Message}");
-        }
+        // Note: clients can't self-loopback via SendMessage(msg, NetId) — the
+        // game throws "Cannot send messages to non-host players as client!"
+        // because the targeted-send overload is host-only. We rely on round-
+        // tripping through MessageTypes for our integrity check (VerifyInjection)
+        // and on user-visible message delivery for the end-to-end check.
     }
 
     /// <summary>
@@ -132,13 +112,6 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
             return;
         }
 
-        // Eat self-loopback probe and log it loudly — if this fires, the bus
-        // pipeline is fully working for our type.
-        if (wire.Text == "__VR_LOOPBACK_PROBE__")
-        {
-            Godot.GD.Print($"[VR][Net] ✅ SELF-LOOPBACK PROBE RECEIVED — bus pipeline works end-to-end (senderId={senderId})");
-            return;
-        }
 
         // Self-echo filter: STS2's bus delivers our own broadcasts back to us.
         // We compare ulong PlayerIds (more reliable than slot indices, which
@@ -219,18 +192,19 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
     // Reflective type injection — isolated to this one method.
     // -------------------------------------------------------------------------
 
-    private static bool _typeRegistered;
-
     /// <summary>
     /// Injects <see cref="VoiceRouletteMessage"/> into MessageTypes._cache so the
     /// game's NetMessageBus can serialize/deserialize our packet by type ID.
-    /// Safe to call multiple times; only the first call mutates the cache.
+    /// The inject is itself idempotent — if the type is already at the fixed
+    /// slot, it's a no-op; if at a different slot, it's moved.
+    ///
+    /// We deliberately do NOT use a static guard here. The previous version
+    /// did, and it caused the force-to-fixed-id fix to never run on second
+    /// session in the same process (mod hot-reload kept the static true while
+    /// the cache had been populated by an earlier code path).
     /// </summary>
     private static void RegisterMessageType()
     {
-        if (_typeRegistered) return;
-        _typeRegistered = true;
-
         InjectIntoMessageTypesCache(typeof(VoiceRouletteMessage));
     }
 
