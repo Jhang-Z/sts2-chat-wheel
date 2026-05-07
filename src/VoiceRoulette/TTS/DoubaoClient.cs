@@ -276,7 +276,12 @@ public sealed class DoubaoClient : ITTSBackend
             user = new { uid = "sts2_chat_wheel" },
             req_params = reqParams,
         };
-        return JsonSerializer.SerializeToUtf8Bytes(body);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(body);
+        // Log the full payload so we can verify the emotion + additions field
+        // is what we think we're sending. Truncated to keep log readable.
+        var json = System.Text.Encoding.UTF8.GetString(bytes);
+        Godot.GD.Print($"[VR][TTS] payload: {(json.Length > 400 ? json[..400] + "…" : json)}");
+        return bytes;
     }
 
     private static byte[] BuildSendTextFrame(byte[] jsonPayload)
