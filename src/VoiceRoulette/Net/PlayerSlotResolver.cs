@@ -56,6 +56,27 @@ public static class PlayerSlotResolver
     }
 
     /// <summary>
+    /// Returns the local player's STS2 PlayerId (ulong), or null if no
+    /// multiplayer session is active. Use this for self-echo detection on
+    /// the bus side, where comparing ulong IDs is more reliable than
+    /// guessing slot indices.
+    /// </summary>
+    public static ulong? ResolveLocalPlayerId()
+    {
+        var states = FindAllPlayerStates();
+        foreach (var s in states)
+        {
+            var isLocal = ReadBool(s, _isLocalProp, "IsLocal");
+            if (isLocal == true)
+            {
+                var pid = ReadUlong(s, _playerIdProp, "PlayerId");
+                if (pid is ulong u) return u;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Maps a STS2 bus senderId (ulong from MessageHandlerDelegate) to a
     /// slot index (0-3). Returns null if no match — caller should treat as
     /// "unknown peer" and pick a fallback.

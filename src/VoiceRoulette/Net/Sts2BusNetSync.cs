@@ -82,6 +82,7 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
     public void Broadcast(WireMessage msg)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        Godot.GD.Print($"[VR][Net] bus broadcast: sender={msg.Sender} text='{msg.Text}' emotion={msg.Emotion ?? "null"}");
         _netService.SendMessage(new VoiceRouletteMessage(msg));
     }
 
@@ -94,23 +95,45 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
 
     private void HandleMessage(VoiceRouletteMessage msg, ulong senderId)
     {
+        Godot.GD.Print($"[VR][Net] bus received: senderId={senderId}");
         var wire = msg.ToWireMessage();
-        if (wire is null) return;
+        if (wire is null)
+        {
+            Godot.GD.PrintErr("[VR][Net] failed to deserialize wire from bus message");
+            return;
+        }
 
-        // The sender field on the wire is meaningless (every peer hardcodes 0
-        // when serializing). Resolve the bus-level senderId to a stable slot
-        // index now that we have access to STS2's player container.
+        // Self-echo filter: STS2's bus delivers our own broadcasts back to us.
+        // We compare ulong PlayerIds (more reliable than slot indices, which
+        // may both be 0 if the resolver hasn't found NMultiplayerPlayerState).
+        var localId = PlayerSlotResolver.ResolveLocalPlayerId();
+        if (localId is ulong me && me == senderId)
+        {
+            Godot.GD.Print($"[VR][Net] skipping self-echo (senderId={senderId} == localPlayerId)");
+            return;
+        }
+
+        // Resolve sender's stable slot for bubble/audio routing.
         var resolved = PlayerSlotResolver.ResolveSlotFromBusSenderId(senderId);
         if (resolved is byte slot)
         {
+            Godot.GD.Print($"[VR][Net] resolved senderId={senderId} → slot={slot}");
             wire = wire with { Sender = slot };
         }
         else
         {
-            // Couldn't resolve — keep the wire's Sender as-is and log so it's
-            // diagnosable. We deliberately do NOT skip the message: we'd
-            // rather show a bubble at the wrong slot than drop it silently.
-            Godot.GD.Print($"[VR][Net] could not resolve senderId={senderId} to slot, falling back to wire.Sender={wire.Sender}");
+            // Couldn't resolve — but we KNOW it's not self (caught above), so
+            // make absolutely sure the dispatcher's slot-based filter doesn't
+            // also drop it as a self-echo. Use senderId's low byte as a fake
+            // slot — different from local slot in practice.
+            var fakeSlot = (byte)(senderId & 0xFF);
+            if (localId is ulong me2)
+            {
+                var localFake = (byte)(me2 & 0xFF);
+                if (fakeSlot == localFake) fakeSlot = (byte)(fakeSlot + 1);
+            }
+            Godot.GD.Print($"[VR][Net] could not resolve senderId={senderId} to slot, using fake slot={fakeSlot} so dispatcher filter doesn't drop it");
+            wire = wire with { Sender = fakeSlot };
         }
 
         LineReceived?.Invoke(wire);

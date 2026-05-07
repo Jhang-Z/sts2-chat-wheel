@@ -20,6 +20,7 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
     private SceneTree? _tree;
     private Action? _processHandler;
     private double _nextCheckSec;
+    private double _nextHeartbeatSec;
     private bool _disposed;
 
     public AdaptiveNetSync()
@@ -45,6 +46,7 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
                 DisposeBus();
             }
         }
+        GD.Print($"[VR][Net] LOCAL broadcast (no co-op bus available): sender={msg.Sender} text='{msg.Text}'");
         _local.Broadcast(msg);
     }
 
@@ -55,6 +57,15 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
         if (nowSec < _nextCheckSec) return;
         _nextCheckSec = nowSec + 1.0;
         TryRefreshBus();
+
+        // Emit a heartbeat every 15s so the user can confirm the polling is
+        // alive and see the current transport state in the log.
+        if (nowSec >= _nextHeartbeatSec)
+        {
+            _nextHeartbeatSec = nowSec + 15.0;
+            var ns = RunManager.Instance?.NetService;
+            GD.Print($"[VR][Net] heartbeat: bus={(_bus != null ? "active" : "inactive")} netService={(ns == null ? "null" : (ns.IsConnected ? "connected" : "not connected"))}");
+        }
     }
 
     private void TryRefreshBus()
@@ -68,11 +79,13 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
             {
                 _bus = new Sts2BusNetSync(netService!);
                 _bus.LineReceived += OnAnyLineReceived;
-                GD.Print("[VR][Net] Co-op session detected — switched to Sts2BusNetSync");
+                var localPid = PlayerSlotResolver.ResolveLocalPlayerId();
+                var localSlot = PlayerSlotResolver.ResolveLocalSlot();
+                GD.Print($"[VR][Net] Co-op session detected — switched to Sts2BusNetSync (localPlayerId={(localPid?.ToString() ?? "unknown")} localSlot={localSlot})");
             }
             catch (Exception ex)
             {
-                GD.PrintErr($"[VR][Net] failed to create bus sync: {ex.GetType().Name}: {ex.Message}");
+                GD.PrintErr($"[VR][Net] failed to create bus sync: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             }
         }
         else if (!connected && _bus != null)
