@@ -206,6 +206,25 @@ public static class PlayerSlotResolver
             var local   = ReadBool(s, _isLocalProp, "IsLocal");
             var node    = s is Node ? "Node" : "Object";
             GD.Print($"[VR][Resolver]   [{i}] type={t.Name} kind={node} Index={(idx?.ToString() ?? "?")} PlayerId={(pid?.ToString() ?? "?")} PeerId={(peerId?.ToString() ?? "?")} IsLocal={(local?.ToString() ?? "?")}");
+
+            // Dump actual public+nonpublic instance properties + fields (across
+            // the inheritance chain) so we can see what names the resolver
+            // SHOULD be using.
+            var allFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var props = new List<string>();
+            for (var ct = t; ct != null && ct != typeof(object); ct = ct.BaseType)
+            {
+                foreach (var p in ct.GetProperties(allFlags | BindingFlags.DeclaredOnly))
+                    if (!props.Contains(p.Name)) props.Add($"{p.Name}:{p.PropertyType.Name}");
+            }
+            GD.Print($"[VR][Resolver]      properties: {string.Join(", ", props)}");
+            var fields = new List<string>();
+            for (var ct = t; ct != null && ct != typeof(object); ct = ct.BaseType)
+            {
+                foreach (var f in ct.GetFields(allFlags | BindingFlags.DeclaredOnly))
+                    if (!fields.Contains(f.Name)) fields.Add($"{f.Name}:{f.FieldType.Name}");
+            }
+            GD.Print($"[VR][Resolver]      fields: {string.Join(", ", fields)}");
         }
     }
 
@@ -213,64 +232,90 @@ public static class PlayerSlotResolver
     // Reflection helpers (cached per type, work on Node OR plain object)
     // -------------------------------------------------------------------------
 
+    private static object? ReadAnyway(object o, Dictionary<Type, PropertyInfo?> cache, string name)
+    {
+        var t = o.GetType();
+        var prop = GetCachedProp(t, cache, name);
+        if (prop != null)
+        {
+            try
+            {
+                var v = prop.GetValue(o);
+                if (v != null) return v;
+            }
+            catch { /* fall through to backing field */ }
+        }
+        var field = FindBackingField(t, name);
+        if (field != null)
+        {
+            try { return field.GetValue(o); } catch { }
+        }
+        return null;
+    }
+
     private static byte? ReadByteIndex(object o)
     {
-        var prop = GetCachedProp(o.GetType(), _indexProp, "Index");
-        if (prop == null) return null;
-        try
+        return ReadAnyway(o, _indexProp, "Index") switch
         {
-            var v = prop.GetValue(o);
-            return v switch
-            {
-                byte b   => b,
-                int i    => (byte)i,
-                short sh => (byte)sh,
-                long l   => (byte)l,
-                _        => null,
-            };
-        }
-        catch { return null; }
+            byte b   => b,
+            int i    => (byte)i,
+            short sh => (byte)sh,
+            long l   => (byte)l,
+            _        => null,
+        };
     }
 
     private static bool? ReadBool(object o, Dictionary<Type, PropertyInfo?> cache, string name)
     {
-        var prop = GetCachedProp(o.GetType(), cache, name);
-        if (prop == null) return null;
-        try { return prop.GetValue(o) as bool?; }
-        catch { return null; }
+        return ReadAnyway(o, cache, name) as bool?;
     }
 
     private static ulong? ReadUlong(object o, Dictionary<Type, PropertyInfo?> cache, string name)
     {
-        var prop = GetCachedProp(o.GetType(), cache, name);
-        if (prop == null) return null;
-        try
+        return ReadAnyway(o, cache, name) switch
         {
-            return prop.GetValue(o) switch
-            {
-                ulong u => u,
-                long l  => (ulong)l,
-                int i   => (ulong)i,
-                uint ui => ui,
-                _       => null,
-            };
-        }
-        catch { return null; }
+            ulong u => u,
+            long l  => (ulong)l,
+            int i   => (ulong)i,
+            uint ui => ui,
+            _       => null,
+        };
     }
 
     private static object? ReadObject(object o, Dictionary<Type, PropertyInfo?> cache, string name)
     {
-        var prop = GetCachedProp(o.GetType(), cache, name);
-        if (prop == null) return null;
-        try { return prop.GetValue(o); }
-        catch { return null; }
+        return ReadAnyway(o, cache, name);
     }
 
     private static PropertyInfo? GetCachedProp(Type t, Dictionary<Type, PropertyInfo?> cache, string name)
     {
         if (cache.TryGetValue(t, out var cached)) return cached;
-        var prop = t.GetProperty(name, BindingFlags.Public | BindingFlags.Instance | BindingFlags.NonPublic);
+        // Walk the inheritance chain manually — GetProperty doesn't find
+        // NonPublic properties declared on base classes by default.
+        PropertyInfo? prop = null;
+        for (var ct = t; ct != null && ct != typeof(object); ct = ct.BaseType)
+        {
+            prop = ct.GetProperty(name,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            if (prop != null) break;
+        }
         cache[t] = prop;
         return prop;
+    }
+
+    // Read backing field directly: <PropName>k__BackingField. Auto-properties
+    // hide their store as a private field with this exact name pattern; if
+    // the property accessor is hidden behind a virtual override that we can't
+    // call, the backing field is still readable.
+    private static FieldInfo? FindBackingField(Type t, string name)
+    {
+        var fieldName = $"<{name}>k__BackingField";
+        for (var ct = t; ct != null && ct != typeof(object); ct = ct.BaseType)
+        {
+            var f = ct.GetField(fieldName,
+                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            if (f != null) return f;
+        }
+        return null;
     }
 }

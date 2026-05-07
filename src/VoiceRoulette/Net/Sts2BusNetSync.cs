@@ -63,7 +63,6 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
 
         RegisterMessageType();
         VerifyInjection();
-        SubscribeToReactionMessageForDiagnosis();
 
         // Capture delegate once to be able to unregister the same instance later.
         _handler = HandleMessage;
@@ -157,11 +156,15 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
         {
             var msgTypesType = Type.GetType("MegaCrit.Sts2.Core.Multiplayer.Serialization.MessageTypes, sts2");
             if (msgTypesType == null) { Godot.GD.PrintErr("[VR][Net] VerifyInjection: MessageTypes type not loadable"); return; }
-            var typeToIdMethod = msgTypesType.GetMethod("TypeToId", new[] { typeof(Type) });
-            var tryGetMethod   = msgTypesType.GetMethod("TryGetMessageType");
+
+            // CRITICAL: BindingFlags.Static is required — these methods are static
+            // and the default GetMethod overload only finds Public+Instance.
+            const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+            var typeToIdMethod = msgTypesType.GetMethod("TypeToId", Flags, null, new[] { typeof(Type) }, null);
+            var tryGetMethod   = msgTypesType.GetMethod("TryGetMessageType", Flags);
             if (typeToIdMethod == null || tryGetMethod == null)
             {
-                Godot.GD.PrintErr("[VR][Net] VerifyInjection: methods not found");
+                Godot.GD.PrintErr($"[VR][Net] VerifyInjection: methods not found (typeToId={typeToIdMethod != null}, tryGet={tryGetMethod != null})");
                 return;
             }
             var ourId = (int)typeToIdMethod.Invoke(null, new object[] { typeof(VoiceRouletteMessage) })!;
@@ -176,54 +179,6 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
         {
             Godot.GD.PrintErr($"[VR][Net] VerifyInjection threw: {ex.GetType().Name}: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Subscribe to ReactionMessage (the game's emoji broadcasts) as a control
-    /// test. If our setup works for game-built-in types but not our custom
-    /// type, this handler fires when teammates use the in-game emoji wheel —
-    /// and we know the bug is in our type injection, not in the bus itself.
-    /// </summary>
-    private void SubscribeToReactionMessageForDiagnosis()
-    {
-        try
-        {
-            var rmType = Type.GetType("MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Flavor.ReactionMessage, sts2");
-            if (rmType == null) { Godot.GD.Print("[VR][Net] no ReactionMessage type — skipping control subscription"); return; }
-
-            // INetGameService.RegisterMessageHandler is generic — we have to call
-            // the closed-over version via reflection.
-            var serviceType = _netService.GetType();
-            var registerGeneric = serviceType.GetInterface("INetGameService")?
-                .GetMethods()
-                .FirstOrDefault(m => m.Name == "RegisterMessageHandler" && m.IsGenericMethodDefinition);
-            if (registerGeneric == null)
-            {
-                // Try the implementation type directly
-                registerGeneric = serviceType
-                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                    .FirstOrDefault(m => m.Name == "RegisterMessageHandler" && m.IsGenericMethodDefinition);
-            }
-            if (registerGeneric == null) { Godot.GD.Print("[VR][Net] couldn't find generic RegisterMessageHandler"); return; }
-
-            var closed = registerGeneric.MakeGenericMethod(rmType);
-            // MessageHandlerDelegate<ReactionMessage> shape: void(ReactionMessage, ulong)
-            var delegateType = closed.GetParameters()[0].ParameterType;
-            var handler = Delegate.CreateDelegate(delegateType, this, nameof(OnAnyReactionMessage));
-            closed.Invoke(_netService, new object[] { handler });
-            Godot.GD.Print("[VR][Net] subscribed to ReactionMessage (control test) — fires when teammates use the in-game emoji wheel");
-        }
-        catch (Exception ex)
-        {
-            Godot.GD.PrintErr($"[VR][Net] ReactionMessage subscription failed: {ex.GetType().Name}: {ex.Message}");
-        }
-    }
-
-    // Called via reflection when a ReactionMessage arrives from any peer.
-    // The signature must match MessageHandlerDelegate<ReactionMessage>.
-    public void OnAnyReactionMessage(object message, ulong senderId)
-    {
-        Godot.GD.Print($"[VR][Net][CTRL] ReactionMessage received from senderId={senderId} (control test — game's emoji broadcast works)");
     }
 
     // -------------------------------------------------------------------------
