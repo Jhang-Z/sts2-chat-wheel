@@ -27,7 +27,7 @@ public class DispatcherTests
     public void Send_AllowedByCooldown_BroadcastsAndPlaysLocal()
     {
         var net = new FakeNet(); var audio = new FakeAudio(); var clock = new FakeClock();
-        var d = new Dispatcher(localSlot: 2, new Cooldown(1.5, 5), net, audio, clock);
+        var d = new Dispatcher(getLocalSlot: () => (byte)2, new Cooldown(1.5, 5), net, audio, clock);
 
         d.Send(new Line("id", "hi", "v", null));
 
@@ -40,7 +40,7 @@ public class DispatcherTests
     public void Send_BlockedByCooldown_DoesNothing()
     {
         var net = new FakeNet(); var audio = new FakeAudio(); var clock = new FakeClock();
-        var d = new Dispatcher(2, new Cooldown(1.5, 5), net, audio, clock);
+        var d = new Dispatcher(() => (byte)2, new Cooldown(1.5, 5), net, audio, clock);
 
         d.Send(new Line("id", "a", "v", null));
         clock.Now = 0.5;
@@ -54,7 +54,7 @@ public class DispatcherTests
     public void Receive_PlaysRemoteWithSenderSlot()
     {
         var net = new FakeNet(); var audio = new FakeAudio(); var clock = new FakeClock();
-        var d = new Dispatcher(2, new Cooldown(1.5, 5), net, audio, clock);
+        var d = new Dispatcher(() => (byte)2, new Cooldown(1.5, 5), net, audio, clock);
 
         net.Receive(new WireMessage(1, 5, "x", "v", 0));
 
@@ -65,7 +65,7 @@ public class DispatcherTests
     public void Receive_FromSelf_Ignored()
     {
         var net = new FakeNet(); var audio = new FakeAudio(); var clock = new FakeClock();
-        var d = new Dispatcher(2, new Cooldown(1.5, 5), net, audio, clock);
+        var d = new Dispatcher(() => (byte)2, new Cooldown(1.5, 5), net, audio, clock);
 
         net.Receive(new WireMessage(1, 2, "x", "v", 0));
 
@@ -76,7 +76,7 @@ public class DispatcherTests
     public void Send_EmptyText_Skipped()
     {
         var net = new FakeNet(); var audio = new FakeAudio(); var clock = new FakeClock();
-        var d = new Dispatcher(2, new Cooldown(1.5, 5), net, audio, clock);
+        var d = new Dispatcher(() => (byte)2, new Cooldown(1.5, 5), net, audio, clock);
 
         d.Send(new Line("id", "", "v", null));
 

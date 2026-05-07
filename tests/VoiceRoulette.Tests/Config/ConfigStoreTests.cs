@@ -14,7 +14,7 @@ public class ConfigStoreTests
     public void Load_MissingFile_ReturnsDefaults()
     {
         var store = ConfigStore.Load(TempPath());
-        store.Schema.Hotkey.Should().Be("V");
+        store.Schema.Hotkey.Should().Be("Y");
         store.Schema.Cooldown.PerSend.Should().Be(0.5);
         store.Schema.Cooldown.WindowMax.Should().Be(30);
         store.Schema.DefaultVoice.Should().Be("zh_female_shuangkuaisisi_uranus_bigtts");

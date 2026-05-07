@@ -17,17 +17,17 @@ public class LineRegistryTests
     public void Resolve_FirstSlot_ReturnsDefaultText()
     {
         var line = Build().Resolve(0);
-        line.Text.Should().Be("好牌！");
+        line.Text.Should().Be("我有啥招呢");
         line.Voice.Should().Be("zh_female_shuangkuaisisi_uranus_bigtts");
-        line.Emotion.Should().Be("happy");
+        line.Emotion.Should().Be("sorry");
     }
 
     [Fact]
-    public void Resolve_TextOnlySlot_HasNullEmotion()
+    public void Resolve_HappySlot_HasHappyEmotion()
     {
-        // Default at index 2 is "去休息点" with Emotion=null (text-only).
-        var line = Build().Resolve(2);
-        line.Emotion.Should().BeNull();
+        // Default at index 7 is "好牌,太强了!!!" with Emotion=happy.
+        var line = Build().Resolve(7);
+        line.Emotion.Should().Be("happy");
     }
 
     [Fact]

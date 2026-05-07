@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using MegaCrit.Sts2.Core.Nodes.Vfx;
 using MegaCrit.Sts2.Core.Nodes.Vfx.Utilities;
+using VoiceRoulette.Net;
 
 namespace VoiceRoulette.UI;
 
@@ -114,6 +115,17 @@ public sealed partial class BubbleOverlay : CanvasLayer
 
     private Vector2 ResolveAnchor(byte slot)
     {
+        // 1) Best: this slot's creature on the battlefield → bubble above its head.
+        var creaturePos = PlayerSlotResolver.TryGetCreaturePositionForSlot(slot);
+        if (creaturePos is Vector2 cpos)
+            return cpos + new Vector2(0, -200);
+
+        // 2) Fallback: this slot's UI portrait row (lobby, map, shop, etc.)
+        var portraitPos = PlayerSlotResolver.TryGetPortraitPositionForSlot(slot);
+        if (portraitPos is Vector2 ppos)
+            return ppos;
+
+        // 3) Last-resort: hardcoded layout for the top-left HUD column.
         if (_playerRowPositions.TryGetValue(slot, out var live)) return live;
         return new Vector2(FallbackAnchorX, FallbackAnchorY + slot * FallbackRowH);
     }
@@ -123,23 +135,15 @@ public sealed partial class BubbleOverlay : CanvasLayer
         if (_tree?.Root == null) return;
         _playerRowPositions.Clear();
 
+        // Heuristic position guess kept around as a final fallback when neither
+        // the per-slot creature nor portrait can be found via the resolver
+        // (e.g. very early in a session before MultiplayerPlayerStateContainer
+        // is populated). Most scenes go through ResolveAnchor's resolver path.
         var rows = new List<(Vector2 pos, float width)>();
         var creatures = new List<Vector2>();
         WalkTree(_tree.Root, rows, creatures);
 
         var viewport = _tree.Root.GetViewport().GetVisibleRect().Size;
-
-        if (rows.Count > 0)
-        {
-            rows.Sort((a, b) => a.pos.Y.CompareTo(b.pos.Y));
-            for (int i = 0; i < rows.Count && i < 4; i++)
-            {
-                var (pos, width) = rows[i];
-                _playerRowPositions[i] = new Vector2(pos.X + width + 8, pos.Y + 14);
-            }
-            LogOnce($"using player rows: {rows.Count} found");
-            return;
-        }
 
         if (creatures.Count > 0)
         {
@@ -153,15 +157,27 @@ public sealed partial class BubbleOverlay : CanvasLayer
 
             if (leftCreatures.Count > 0)
             {
-                LogOnce($"using creature anchor: {leftCreatures.Count} on left, total found {creatures.Count}");
+                LogOnce($"heuristic: {leftCreatures.Count} left creatures (used as last-resort)");
                 return;
             }
+        }
+
+        if (rows.Count > 0)
+        {
+            rows.Sort((a, b) => a.pos.Y.CompareTo(b.pos.Y));
+            for (int i = 0; i < rows.Count && i < 4; i++)
+            {
+                var (pos, width) = rows[i];
+                _playerRowPositions[i] = new Vector2(pos.X + width + 8, pos.Y + 14);
+            }
+            LogOnce($"heuristic: {rows.Count} player rows (used as last-resort)");
+            return;
         }
 
         var typicalPlayerHead = new Vector2(viewport.X * 0.22f, viewport.Y * 0.40f);
         for (int i = 0; i < 4; i++)
             _playerRowPositions[i] = typicalPlayerHead + new Vector2(i * 220f, 0);
-        LogOnce($"using viewport fallback at {typicalPlayerHead} (rows={rows.Count}, creatures={creatures.Count})");
+        LogOnce($"heuristic: viewport fallback at {typicalPlayerHead}");
     }
 
     private void LogOnce(string msg)

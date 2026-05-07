@@ -95,8 +95,25 @@ public sealed class Sts2BusNetSync : INetSync, IDisposable
     private void HandleMessage(VoiceRouletteMessage msg, ulong senderId)
     {
         var wire = msg.ToWireMessage();
-        if (wire is not null)
-            LineReceived?.Invoke(wire);
+        if (wire is null) return;
+
+        // The sender field on the wire is meaningless (every peer hardcodes 0
+        // when serializing). Resolve the bus-level senderId to a stable slot
+        // index now that we have access to STS2's player container.
+        var resolved = PlayerSlotResolver.ResolveSlotFromBusSenderId(senderId);
+        if (resolved is byte slot)
+        {
+            wire = wire with { Sender = slot };
+        }
+        else
+        {
+            // Couldn't resolve — keep the wire's Sender as-is and log so it's
+            // diagnosable. We deliberately do NOT skip the message: we'd
+            // rather show a bubble at the wrong slot than drop it silently.
+            Godot.GD.Print($"[VR][Net] could not resolve senderId={senderId} to slot, falling back to wire.Sender={wire.Sender}");
+        }
+
+        LineReceived?.Invoke(wire);
     }
 
     // -------------------------------------------------------------------------

@@ -57,10 +57,7 @@ public static class Plugin
             // No prerendered seeding in v0.2 — voice + emotion combination space is
             // too large to ship offline. Doubao TTS synthesizes on first use, then caches.
 
-            var doubao = new DoubaoClient(
-                config.Schema.Doubao.Endpoint,
-                config.Schema.Doubao.ApiKey,
-                config.Schema.Doubao.ResourceId);
+            var doubao = new DoubaoClient(config.Schema.Doubao);
             var tts = new TTSPipeline(doubao, cache);
 
             var wheel = new WheelUI();
@@ -69,13 +66,17 @@ public static class Plugin
             var settings = new SettingsScreen();
             var pinger = new StatusPinger();
             var analyzer = new HandAnalyzer();
-            INetSync net = Sts2BusNetSync.TryCreate() ?? (INetSync)new LocalNetSync();
+            INetSync net = new AdaptiveNetSync();
             GD.Print($"[VR] NetSync = {net.GetType().Name}");
 
-            const byte LocalSlot = 0;
+            // Dynamically resolve our slot every time we send. In singleplayer
+            // this returns 0; in co-op it returns whichever slot STS2 assigned
+            // us (could be 0/1/2/3 depending on join order). Caching once at
+            // mod load doesn't work because the mod loads before any session.
+            Func<byte> getLocalSlot = () => PlayerSlotResolver.ResolveLocalSlot();
 
             var dispatcher = new Dispatch.Dispatcher(
-                localSlot: LocalSlot,
+                getLocalSlot: getLocalSlot,
                 new Cooldown(config.Schema.Cooldown.PerSend, config.Schema.Cooldown.WindowMax),
                 net, audio, new GodotClock());
 
@@ -97,12 +98,12 @@ public static class Plugin
                 var line = registry.Resolve(idx);
                 GD.Print($"[VR] Dispatching: text='{line.Text}' emotion='{line.Emotion ?? "(none)"}'");
                 dispatcher.Send(line);
-                bubble.Show(line.Text, LocalSlot, hasVoice: line.Emotion != null);
+                bubble.Show(line.Text, getLocalSlot(), hasVoice: line.Emotion != null);
             };
 
             net.LineReceived += msg =>
             {
-                if (msg.Sender == LocalSlot) return;
+                if (msg.Sender == getLocalSlot()) return;
                 bubble.Show(msg.Text, msg.Sender, hasVoice: msg.Emotion != null);
             };
 
@@ -114,7 +115,7 @@ public static class Plugin
             {
                 var line = new Line("status_ping", text, config.Schema.DefaultVoice, PingEmotion);
                 dispatcher.Send(line);
-                bubble.Show(text, LocalSlot, hasVoice: true);
+                bubble.Show(text, getLocalSlot(), hasVoice: true);
             };
 
             // Settings preview: synthesize and play locally without going through
@@ -124,7 +125,7 @@ public static class Plugin
             Action<string, string?, string> preview = (text, emotion, voice) =>
             {
                 if (string.IsNullOrEmpty(text)) return;
-                audio.Play(LocalSlot, text, voice, emotion);
+                audio.Play(getLocalSlot(), text, voice, emotion);
             };
 
             // Defer node attachment to first idle frame: at mod-load time the root Window
@@ -161,7 +162,7 @@ public static class Plugin
                         previewCallback: preview,
                         toggleKeyHint: KeyToHint(settingsKey));
                     pinger.Start(sendPing);
-                    analyzer.Start(LocalSlot, sendPing);
+                    analyzer.Start(getLocalSlot(), sendPing);
                 }
                 catch (Exception ex)
                 {

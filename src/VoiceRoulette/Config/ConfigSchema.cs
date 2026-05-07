@@ -4,7 +4,7 @@ namespace VoiceRoulette.Config;
 
 public sealed class ConfigSchema
 {
-    public string Hotkey { get; set; } = "V";
+    public string Hotkey { get; set; } = "Y";
     public string SettingsHotkey { get; set; } = "Semicolon";
     public DoubaoConfig Doubao { get; set; } = new();
     // Doubao TTS 2.0 — uranus voices (爽快思思·女声·轻快). Emotion is controlled by
@@ -74,14 +74,14 @@ public sealed class LineEntry
         // so users immediately see the toggle in action.
         return new()
         {
-            new() { Id = "slot_0", Text = "好牌！",     Emotion = "happy" },
-            new() { Id = "slot_1", Text = "打精英怪！", Emotion = "novel_dialog" },
-            new() { Id = "slot_2", Text = "去休息点",   Emotion = null },
-            new() { Id = "slot_3", Text = "继续推进",   Emotion = "novel_dialog" },
-            new() { Id = "slot_4", Text = "等一下",     Emotion = null },
-            new() { Id = "slot_5", Text = "撤退！",     Emotion = "angry" },
-            new() { Id = "slot_6", Text = "我来挡",     Emotion = "novel_dialog" },
-            new() { Id = "slot_7", Text = "干得漂亮！", Emotion = "happy" },
+            new() { Id = "slot_0", Text = "我有啥招呢",         Emotion = "sorry" },
+            new() { Id = "slot_1", Text = "我没有输出了",        Emotion = "sad" },
+            new() { Id = "slot_2", Text = "重开一下",            Emotion = "novel_dialog" },
+            new() { Id = "slot_3", Text = "那没办法",            Emotion = "sad" },
+            new() { Id = "slot_4", Text = "你打的什么玩意",      Emotion = "angry" },
+            new() { Id = "slot_5", Text = "求求你了,打点输出吧", Emotion = "sad" },
+            new() { Id = "slot_6", Text = "别慌,有我在!",        Emotion = "novel_dialog" },
+            new() { Id = "slot_7", Text = "好牌,太强了!!!",      Emotion = "happy" },
         };
     }
 }
