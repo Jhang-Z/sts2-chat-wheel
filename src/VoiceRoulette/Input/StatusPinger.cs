@@ -13,7 +13,7 @@ public sealed partial class StatusPinger : Node
 {
     private SceneTree? _tree;
     private Action<string>? _onPing;
-    private bool _previousLeftPressed;
+    private bool _previousRightPressed;
 
     public void Start(Action<string> onPing)
     {
@@ -29,14 +29,14 @@ public sealed partial class StatusPinger : Node
 
         var mousePos = _tree.Root.GetMousePosition();
 
-        // ── Cmd/Ctrl+left-click → announce potion or power ───────────────────
+        // ── Cmd/Ctrl+right-click → announce potion / power / relic ───────────
         var modifierHeld =
             Godot.Input.IsKeyPressed(Key.Meta) ||
             Godot.Input.IsKeyPressed(Key.Ctrl);
 
-        var leftPressed = Godot.Input.IsMouseButtonPressed(MouseButton.Left);
-        var clicked = leftPressed && !_previousLeftPressed && modifierHeld;
-        _previousLeftPressed = leftPressed;
+        var rightPressed = Godot.Input.IsMouseButtonPressed(MouseButton.Right);
+        var clicked = rightPressed && !_previousRightPressed && modifierHeld;
+        _previousRightPressed = rightPressed;
 
         if (!clicked) return;
 
