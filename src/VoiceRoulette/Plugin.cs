@@ -190,7 +190,7 @@ public static class Plugin
                             enemyPos.X, enemyPos.Y,
                             (ulong)System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                         net.BroadcastMarker(wire);
-                        sendPing("都打这个");
+                        sendPing("都打这一只");
                         try
                         {
                             MegaCrit.Sts2.Core.Nodes.Audio.NAudioManager.Instance?
