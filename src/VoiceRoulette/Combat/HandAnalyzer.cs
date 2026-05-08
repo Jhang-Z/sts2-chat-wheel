@@ -17,10 +17,16 @@ public sealed partial class HandAnalyzer : Node
     private SceneTree? _tree;
     private Action<string>? _onPing;
 
-    // Keywords match cards that APPLY the debuff, not cards that benefit from it.
-    // "层易伤" matches "给予2层易伤" but NOT "如果该敌人有易伤状态".
-    private static readonly string[] VulnerableKeywords = ["层易伤", "给予易伤", "Apply Vulnerable"];
-    private static readonly string[] WeakKeywords       = ["层虚弱", "给予虚弱", "Apply Weak"];
+    // Match cards that APPLY the debuff, not cards that scale off it.
+    // Requires an apply-verb (给予/施加/获得) within a few chars of the keyword,
+    // so "给予2层易伤" / "敌人获得1层易伤" match, but "每1层易伤造成X伤害" /
+    // "对易伤敌人造成X倍伤害" / "若敌人有易伤" do NOT.
+    private static readonly Regex VulnerableApplyRegex = new(
+        @"(给予|施加|获得)\s*\d*\s*层?\s*易伤|Apply\s+\d*\s*Vulnerable",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex WeakApplyRegex = new(
+        @"(给予|施加|获得)\s*\d*\s*层?\s*虚弱|Apply\s+\d*\s*Weak",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     // Strip Godot RichText BBCode tags like [color=...], [gold], [/gold], [img]...[/img].
     // Card descriptions wrap keywords in tags, e.g. "给予2层[gold]易伤[/gold]" — without
@@ -101,6 +107,12 @@ public sealed partial class HandAnalyzer : Node
         var hasWeak = false;
         foreach (var card in hand.Cards)
         {
+            // Skip cards we can't actually play this turn — Status/Curse cards
+            // whose flavor text might match the keyword, and cards we don't have
+            // energy for. Without this we ping "我有易伤牌" for cards that just
+            // sit in hand.
+            if (!card.CanPlay()) continue;
+
             string desc;
             try { desc = card.GetDescriptionForPile(PileType.Hand, creature) ?? ""; }
             catch (Exception ex) { GD.Print($"[VR][HandAnalyzer] desc error: {ex.Message}"); desc = ""; }
@@ -108,8 +120,8 @@ public sealed partial class HandAnalyzer : Node
             // Strip BBCode tags so "给予2层[gold]易伤[/gold]" becomes "给予2层易伤".
             var plain = BBCodeRegex.Replace(desc, "");
 
-            if (!hasVulnerable && ContainsAny(plain, VulnerableKeywords)) hasVulnerable = true;
-            if (!hasWeak       && ContainsAny(plain, WeakKeywords))       hasWeak = true;
+            if (!hasVulnerable && VulnerableApplyRegex.IsMatch(plain)) hasVulnerable = true;
+            if (!hasWeak       && WeakApplyRegex.IsMatch(plain))       hasWeak = true;
 
             if (hasVulnerable && hasWeak) break;
         }
@@ -129,10 +141,4 @@ public sealed partial class HandAnalyzer : Node
         }
     }
 
-    private static bool ContainsAny(string haystack, string[] needles)
-    {
-        foreach (var n in needles)
-            if (haystack.Contains(n, StringComparison.OrdinalIgnoreCase)) return true;
-        return false;
-    }
 }
