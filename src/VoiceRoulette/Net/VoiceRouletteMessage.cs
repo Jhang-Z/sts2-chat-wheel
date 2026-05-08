@@ -20,6 +20,7 @@ public sealed class VoiceRouletteMessage : INetMessage
 
     // Required by INetMessage.
     public bool ShouldBroadcast => true;
+    public bool ShouldBuffer => true;  // Added in 2026-05-08 game patch — buffer so peers joining late get our chat
     public NetTransferMode Mode => NetTransferMode.Reliable;
     public LogLevel LogLevel => LogLevel.Debug;
 
