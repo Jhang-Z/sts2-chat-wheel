@@ -177,17 +177,29 @@ public static class Plugin
                     analyzer.Start(getLocalSlot(), sendPing);
                     threat.Start(sendPing);
                     marker.Start();
-                    markerInput.Start(worldPos =>
+                    markerInput.Start(enemyPos =>
                     {
-                        // Show locally + broadcast to peers.
+                        // F+click on enemy: combine three things into one
+                        // gesture — local arrow, network broadcast, voice
+                        // ping (bubble + audio), and the game's UI click sfx.
                         var slot = getLocalSlot();
-                        marker.Show(worldPos);
+                        marker.Show(enemyPos);
                         var wire = new MarkerWire(
                             MarkerWire.CurrentVersion,
                             slot,
-                            worldPos.X, worldPos.Y,
+                            enemyPos.X, enemyPos.Y,
                             (ulong)System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                         net.BroadcastMarker(wire);
+                        sendPing("都打这个");
+                        try
+                        {
+                            MegaCrit.Sts2.Core.Nodes.Audio.NAudioManager.Instance?
+                                .PlayOneShot("event:/sfx/ui/clicks/ui_click", 1.0f);
+                        }
+                        catch (Exception ex)
+                        {
+                            GD.PrintErr($"[VR][Marker] sfx failed: {ex.Message}");
+                        }
                     });
                 }
                 catch (Exception ex)

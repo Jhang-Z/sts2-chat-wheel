@@ -1,30 +1,28 @@
 using Godot;
-using System.Collections.Generic;
 
 namespace VoiceRoulette.UI;
 
 /// <summary>
 /// Renders a transient down-pointing arrow at a world position when someone
-/// places a tactical "look here" marker. Auto-fades out after ~2s.
+/// places a tactical "look here" marker. Each marker self-cleans via a
+/// SceneTree timer + Tween — no per-frame _Process polling (which had a
+/// reliability issue: previous implementation accumulated stale arrows).
 /// </summary>
 public sealed partial class MarkerOverlay : CanvasLayer
 {
     private const float DisplaySeconds = 2.0f;
-    private const float ArrowOffsetY   = 70f;        // float arrow this far above the target
+    private const float ArrowOffsetY   = 70f;
     private const float ArrowSize      = 36f;
 
     private static readonly Color FillColor    = StsTheme.MenuAccent;
     private static readonly Color OutlineColor = new("00000099");
 
     private SceneTree? _tree;
-    private readonly List<MarkerInstance> _active = new();
 
     public void Start()
     {
         _tree = (SceneTree)Engine.GetMainLoop();
-        Layer = 110;  // above bubble overlay (100), below settings (250)
-        ProcessMode = ProcessModeEnum.Always;
-        SetProcess(true);
+        Layer = 110;
     }
 
     /// <summary>Place a marker at the given world-space point.</summary>
@@ -39,15 +37,14 @@ public sealed partial class MarkerOverlay : CanvasLayer
         {
             Polygon = new[]
             {
-                new Vector2(0, ArrowSize),                              // tip (downward)
-                new Vector2(-ArrowSize * 0.6f, 0),                      // top-left
-                new Vector2(ArrowSize * 0.6f, 0),                       // top-right
+                new Vector2(0, ArrowSize),
+                new Vector2(-ArrowSize * 0.6f, 0),
+                new Vector2(ArrowSize * 0.6f, 0),
             },
             Color = FillColor,
             Position = anchor,
         };
 
-        // Black outline drawn underneath the fill for readability against any bg.
         var outline = new Line2D
         {
             DefaultColor = OutlineColor,
@@ -63,55 +60,24 @@ public sealed partial class MarkerOverlay : CanvasLayer
         AddChild(outline);
         AddChild(fill);
 
-        _active.Add(new MarkerInstance
+        // Pulse + fade out via Tween — runs on the SceneTree's tween scheduler,
+        // independent of any _Process callback. Auto-frees nodes on completion.
+        var tween = fill.CreateTween();
+        tween.SetParallel(true);
+        tween.TweenProperty(fill, "scale", new Vector2(1.3f, 1.3f), DisplaySeconds * 0.5f);
+        tween.TweenProperty(outline, "scale", new Vector2(1.3f, 1.3f), DisplaySeconds * 0.5f);
+        tween.Chain().TweenProperty(fill, "modulate:a", 0f, 0.5f);
+        tween.Parallel().TweenProperty(outline, "modulate:a", 0f, 0.5f);
+
+        // Hard cleanup — even if Tween glitches, this guarantees the node
+        // disappears within DisplaySeconds + small buffer.
+        var cleanupTimer = _tree.CreateTimer(DisplaySeconds + 0.2);
+        cleanupTimer.Timeout += () =>
         {
-            Fill = fill,
-            Outline = outline,
-            Born = Time.GetTicksMsec() / 1000.0,
-        });
+            if (GodotObject.IsInstanceValid(fill))    fill.QueueFree();
+            if (GodotObject.IsInstanceValid(outline)) outline.QueueFree();
+        };
 
         GD.Print($"[VR][Marker] showing at world {worldPos}");
-    }
-
-    public override void _Process(double delta)
-    {
-        if (_active.Count == 0) return;
-        var now = Time.GetTicksMsec() / 1000.0;
-        for (var i = _active.Count - 1; i >= 0; i--)
-        {
-            var m = _active[i];
-            var age = now - m.Born;
-            if (age >= DisplaySeconds)
-            {
-                if (GodotObject.IsInstanceValid(m.Fill))    m.Fill.QueueFree();
-                if (GodotObject.IsInstanceValid(m.Outline)) m.Outline.QueueFree();
-                _active.RemoveAt(i);
-                continue;
-            }
-            // Pulse: scale 1.0 → 1.2 → 1.0 over the lifetime; fade out last 0.5s.
-            var t = (float)(age / DisplaySeconds);
-            var scale = 1f + 0.2f * Mathf.Sin(t * Mathf.Pi);
-            var alpha = age > DisplaySeconds - 0.5
-                ? (float)((DisplaySeconds - age) / 0.5)
-                : 1f;
-
-            if (GodotObject.IsInstanceValid(m.Fill))
-            {
-                m.Fill.Scale = new Vector2(scale, scale);
-                m.Fill.Modulate = new Color(1, 1, 1, alpha);
-            }
-            if (GodotObject.IsInstanceValid(m.Outline))
-            {
-                m.Outline.Scale = new Vector2(scale, scale);
-                m.Outline.Modulate = new Color(1, 1, 1, alpha);
-            }
-        }
-    }
-
-    private sealed class MarkerInstance
-    {
-        public required Polygon2D Fill;
-        public required Line2D Outline;
-        public required double Born;
     }
 }
