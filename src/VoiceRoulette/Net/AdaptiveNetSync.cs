@@ -15,6 +15,7 @@ namespace VoiceRoulette.Net;
 public sealed class AdaptiveNetSync : INetSync, IDisposable
 {
     public event Action<WireMessage>? LineReceived;
+    public event Action<MarkerWire>? MarkerReceived;
 
     private readonly LocalNetSync _local = new();
     private Sts2BusNetSync? _bus;
@@ -27,6 +28,7 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
     public AdaptiveNetSync()
     {
         _local.LineReceived += OnAnyLineReceived;
+        _local.MarkerReceived += OnAnyMarkerReceived;
 
         _tree = (SceneTree)Engine.GetMainLoop();
         _processHandler = OnProcessFrame;
@@ -49,6 +51,22 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
         }
         GD.Print($"[VR][Net] LOCAL broadcast (no co-op bus available): sender={msg.Sender} text='{msg.Text}'");
         _local.Broadcast(msg);
+    }
+
+    public void BroadcastMarker(MarkerWire marker)
+    {
+        if (_disposed) return;
+        TryRefreshBus();
+        if (_bus != null)
+        {
+            try { _bus.BroadcastMarker(marker); return; }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[VR][Net] bus marker broadcast failed: {ex.GetType().Name}: {ex.Message}");
+                DisposeBus();
+            }
+        }
+        _local.BroadcastMarker(marker);
     }
 
     private void OnProcessFrame()
@@ -95,6 +113,7 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
             {
                 _bus = new Sts2BusNetSync(netService!);
                 _bus.LineReceived += OnAnyLineReceived;
+                _bus.MarkerReceived += OnAnyMarkerReceived;
                 _attachedNetService = netService;
                 var localPid = PlayerSlotResolver.ResolveLocalPlayerId();
                 var localSlot = PlayerSlotResolver.ResolveLocalSlot();
@@ -118,11 +137,13 @@ public sealed class AdaptiveNetSync : INetSync, IDisposable
     {
         if (_bus == null) return;
         _bus.LineReceived -= OnAnyLineReceived;
+        _bus.MarkerReceived -= OnAnyMarkerReceived;
         try { _bus.Dispose(); } catch { }
         _bus = null;
     }
 
     private void OnAnyLineReceived(WireMessage msg) => LineReceived?.Invoke(msg);
+    private void OnAnyMarkerReceived(MarkerWire m) => MarkerReceived?.Invoke(m);
 
     public void Dispose()
     {

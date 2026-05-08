@@ -10,6 +10,8 @@ namespace VoiceRoulette.Net;
 public sealed class LocalNetSync : INetSync
 {
     public event Action<WireMessage>? LineReceived;
+    public event Action<MarkerWire>? MarkerReceived;
 
     public void Broadcast(WireMessage msg) => LineReceived?.Invoke(msg);
+    public void BroadcastMarker(MarkerWire marker) => MarkerReceived?.Invoke(marker);
 }

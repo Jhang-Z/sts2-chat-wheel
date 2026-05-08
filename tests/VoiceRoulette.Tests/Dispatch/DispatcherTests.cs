@@ -13,9 +13,13 @@ public class DispatcherTests
     private sealed class FakeNet : INetSync
     {
         public List<WireMessage> Sent = new();
+        public List<MarkerWire> SentMarkers = new();
         public void Broadcast(WireMessage m) => Sent.Add(m);
+        public void BroadcastMarker(MarkerWire m) => SentMarkers.Add(m);
         public event System.Action<WireMessage>? LineReceived;
+        public event System.Action<MarkerWire>? MarkerReceived;
         public void Receive(WireMessage m) => LineReceived?.Invoke(m);
+        public void ReceiveMarker(MarkerWire m) => MarkerReceived?.Invoke(m);
     }
     private sealed class FakeAudio : IAudioOutput
     {

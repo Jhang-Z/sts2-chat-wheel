@@ -63,9 +63,12 @@ public static class Plugin
             var wheel = new WheelUI();
             var audio = new AudioPlayer(tts);
             var bubble = new BubbleOverlay();
+            var marker = new MarkerOverlay();
             var settings = new SettingsScreen();
             var pinger = new StatusPinger();
             var analyzer = new HandAnalyzer();
+            var threat = new ThreatAnalyzer();
+            var markerInput = new VoiceRoulette.Input.MarkerInput();
             INetSync net = new AdaptiveNetSync();
             GD.Print($"[VR] NetSync = {net.GetType().Name}");
 
@@ -107,6 +110,12 @@ public static class Plugin
                 bubble.Show(msg.Text, msg.Sender, hasVoice: msg.Emotion != null);
             };
 
+            net.MarkerReceived += m =>
+            {
+                if (m.Sender == getLocalSlot()) return;  // we already drew our own
+                marker.Show(new Vector2(m.X, m.Y));
+            };
+
             input.SettingsToggled += () => settings.Toggle();
 
             // Status pings (potion/power click, hand analysis) always go through dispatcher
@@ -141,9 +150,12 @@ public static class Plugin
                     sceneRoot.AddChild(audio);
                     sceneRoot.AddChild(input);
                     sceneRoot.AddChild(bubble);
+                    sceneRoot.AddChild(marker);
                     sceneRoot.AddChild(settings);
                     sceneRoot.AddChild(pinger);
                     sceneRoot.AddChild(analyzer);
+                    sceneRoot.AddChild(threat);
+                    sceneRoot.AddChild(markerInput);
                     GD.Print($"[VR] nodes attached.");
 
                     wheel.Initialize(modDir: ModDir);
@@ -163,6 +175,20 @@ public static class Plugin
                         toggleKeyHint: KeyToHint(settingsKey));
                     pinger.Start(sendPing);
                     analyzer.Start(getLocalSlot(), sendPing);
+                    threat.Start(sendPing);
+                    marker.Start();
+                    markerInput.Start(worldPos =>
+                    {
+                        // Show locally + broadcast to peers.
+                        var slot = getLocalSlot();
+                        marker.Show(worldPos);
+                        var wire = new MarkerWire(
+                            MarkerWire.CurrentVersion,
+                            slot,
+                            worldPos.X, worldPos.Y,
+                            (ulong)System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                        net.BroadcastMarker(wire);
+                    });
                 }
                 catch (Exception ex)
                 {
