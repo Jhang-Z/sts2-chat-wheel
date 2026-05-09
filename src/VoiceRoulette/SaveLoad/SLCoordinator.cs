@@ -167,8 +167,8 @@ public sealed partial class SLCoordinator : Node
             DeadlineSec = nowSec + VoteTimeoutSec,
             ExpectedPeerCount = Math.Max(1, peerCount),
         };
-        _active.Accepted.Add(proposerId);  // proposer is implicitly accepted
-
+        // Proposer NOT auto-accepted — every peer (including proposer) must
+        // explicitly click Confirm. Counter starts at 0/N for everyone.
         var localId = TryGetNetService()?.NetId ?? 0UL;
         var byMe = isLocalProposer || proposerId == localId;
         _ui?.Show(byMe, _active.ExpectedPeerCount, _active.Accepted.Count);
