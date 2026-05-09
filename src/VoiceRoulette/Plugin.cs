@@ -184,7 +184,7 @@ public static class Plugin
                     // the unified click handler (StatusPinger) and any future
                     // call sites. Combines local arrow + net broadcast +
                     // voice ping + game's UI click sfx.
-                    Action<Vector2> markEnemy = enemyPos =>
+                    Action<Vector2, string> markEnemy = (enemyPos, msg) =>
                     {
                         var slot = getLocalSlot();
                         marker.Show(enemyPos);
@@ -194,7 +194,7 @@ public static class Plugin
                             enemyPos.X, enemyPos.Y,
                             (ulong)System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                         net.BroadcastMarker(wire);
-                        sendPing("都打这一只");
+                        sendPing(msg);
                         try
                         {
                             MegaCrit.Sts2.Core.Nodes.Audio.NAudioManager.Instance?

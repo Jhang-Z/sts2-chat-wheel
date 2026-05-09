@@ -8,13 +8,17 @@ using MegaCrit.Sts2.Core.Nodes.Relics;
 namespace VoiceRoulette.Input;
 
 // Unified Cmd/Ctrl + Right-click handler. Dispatches to one of:
-//   • enemy under cursor   → onMark(enemyPos) — drops a tactical marker
+//   • enemy under cursor   → onMark(pos, "都打这一只(血量 30/50)")
 //   • potion               → "我有【火焰药水】"
 //   • power                → "我处于【力量2】的状态"
 //   • relic                → "我有遗物【燃烧之血】"
 //   • top-bar gold         → "我有 150 金币"
-//   • top-bar HP           → "我血量 75/80"
+//   • top-bar HP           → "我血量 75/80, 格挡 5"  (block included when > 0)
 //   • combat energy        → "我能量 3/3"
+//   • top-bar deck button  → "我牌组 32 张"
+//   • draw pile button     → "抽牌堆 8 张"
+//   • discard pile button  → "弃牌堆 3 张"
+//   • exhaust pile button  → "消耗堆 2 张"
 //
 // Priority order matters: enemy is checked first because the bottom-of-screen
 // hit areas (potion belt, gold/hp on the left) would otherwise overlap with
@@ -23,10 +27,10 @@ public sealed partial class StatusPinger : Node
 {
     private SceneTree? _tree;
     private Action<string>? _onPing;
-    private Action<Vector2>? _onMark;
+    private Action<Vector2, string>? _onMark;
     private bool _previousRightPressed;
 
-    public void Start(Action<string> onPing, Action<Vector2> onMark)
+    public void Start(Action<string> onPing, Action<Vector2, string> onMark)
     {
         _tree = (SceneTree)Engine.GetMainLoop();
         _onPing = onPing;
@@ -56,9 +60,14 @@ public sealed partial class StatusPinger : Node
         switch (hit.Kind)
         {
             case HitKind.Enemy:
-                GD.Print($"[VR][Pinger] enemy mark at {hit.EnemyPos}");
-                _onMark(hit.EnemyPos);
-                break;
+                {
+                    var msg = hit.IntValue2 > 0
+                        ? $"都打这一只(血量 {hit.IntValue}/{hit.IntValue2})"
+                        : "都打这一只";
+                    GD.Print($"[VR][Pinger] enemy mark at {hit.EnemyPos}: {msg}");
+                    _onMark(hit.EnemyPos, msg);
+                    break;
+                }
             case HitKind.Potion:
                 Ping($"我有【{NameOrUnknown(hit.Potion!.Model?.Title?.GetFormattedText())}】");
                 break;
@@ -76,10 +85,27 @@ public sealed partial class StatusPinger : Node
                 Ping($"我有 {hit.IntValue} 金币");
                 break;
             case HitKind.Hp:
-                Ping($"我血量 {hit.IntValue}/{hit.IntValue2}");
-                break;
+                {
+                    // IntValue=cur, IntValue2=max, Block stored in StringValue parsed back
+                    var msg = $"我血量 {hit.IntValue}/{hit.IntValue2}";
+                    if (hit.BlockValue > 0) msg += $", 格挡 {hit.BlockValue}";
+                    Ping(msg);
+                    break;
+                }
             case HitKind.Energy:
                 Ping($"我能量 {hit.IntValue}/{hit.IntValue2}");
+                break;
+            case HitKind.Deck:
+                Ping($"我牌组 {hit.IntValue} 张");
+                break;
+            case HitKind.DrawPile:
+                Ping($"抽牌堆 {hit.IntValue} 张");
+                break;
+            case HitKind.DiscardPile:
+                Ping($"弃牌堆 {hit.IntValue} 张");
+                break;
+            case HitKind.ExhaustPile:
+                Ping($"消耗堆 {hit.IntValue} 张");
                 break;
             default:
                 GD.Print($"[VR][Pinger] no actionable target under cursor at {mousePos}");
@@ -97,7 +123,7 @@ public sealed partial class StatusPinger : Node
 
     // ── Hit detection ────────────────────────────────────────────────────────
 
-    private enum HitKind { None, Enemy, Potion, Power, Relic, Gold, Hp, Energy }
+    private enum HitKind { None, Enemy, Potion, Power, Relic, Gold, Hp, Energy, Deck, DrawPile, DiscardPile, ExhaustPile }
 
     private struct HitResult
     {
@@ -106,36 +132,53 @@ public sealed partial class StatusPinger : Node
         public NPotion? Potion;
         public NPower?  Power;
         public NRelic?  Relic;
-        public int IntValue;   // gold, current hp, current energy
-        public int IntValue2;  // max hp, max energy
+        public int IntValue;    // gold / current hp / current energy / deck count / pile count / enemy current hp
+        public int IntValue2;   // max hp / max energy / enemy max hp
+        public int BlockValue;  // player block (HP only)
     }
 
     private static HitResult FindUnderCursor(Node root, Vector2 mousePos)
     {
         // Best-of-class trackers; we pick winner by priority at the end.
-        Vector2? bestEnemy = null;        float bestEnemyDist = float.MaxValue;
+        NCreature? bestEnemyNode = null;  float bestEnemyDist = float.MaxValue;
         NPotion? bestPotion = null;       float bestPotionDist = float.MaxValue;
         NPower?  bestPower  = null;       float bestPowerDist  = float.MaxValue;
         NRelic?  bestRelic  = null;       float bestRelicDist  = float.MaxValue;
         Control? goldHit    = null;
         Control? hpHit      = null;
         Control? energyHit  = null;
+        Control? deckHit    = null;
+        Control? drawHit    = null;
+        Control? discardHit = null;
+        Control? exhaustHit = null;
 
         Walk(root);
 
-        // Priority: enemy > combat-area items (potion/power/relic) > top-bar (gold/hp/energy).
-        if (bestEnemy.HasValue)
-            return new HitResult { Kind = HitKind.Enemy, EnemyPos = bestEnemy.Value };
+        // Priority: enemy > combat-area items > top-bar/UI buttons.
+        if (bestEnemyNode != null)
+        {
+            var pos = bestEnemyNode.GlobalPosition;
+            TryReadCreatureHp(bestEnemyNode, out var ehc, out var ehm);
+            return new HitResult { Kind = HitKind.Enemy, EnemyPos = pos, IntValue = ehc, IntValue2 = ehm };
+        }
         if (bestPotion != null) return new HitResult { Kind = HitKind.Potion, Potion = bestPotion };
         if (bestPower  != null) return new HitResult { Kind = HitKind.Power,  Power = bestPower  };
         if (bestRelic  != null) return new HitResult { Kind = HitKind.Relic,  Relic = bestRelic  };
 
         if (goldHit != null && TryReadGold(goldHit, out var gold))
             return new HitResult { Kind = HitKind.Gold, IntValue = gold };
-        if (hpHit != null && TryReadHp(hpHit, out var cur, out var max))
-            return new HitResult { Kind = HitKind.Hp, IntValue = cur, IntValue2 = max };
+        if (hpHit != null && TryReadHp(hpHit, out var cur, out var max, out var blk))
+            return new HitResult { Kind = HitKind.Hp, IntValue = cur, IntValue2 = max, BlockValue = blk };
         if (energyHit != null && TryReadEnergy(energyHit, out var ce, out var me))
             return new HitResult { Kind = HitKind.Energy, IntValue = ce, IntValue2 = me };
+        if (deckHit != null && TryReadDeckCount(deckHit, out var dc))
+            return new HitResult { Kind = HitKind.Deck, IntValue = dc };
+        if (drawHit != null && TryReadPileCount("DrawPile", out var dpc))
+            return new HitResult { Kind = HitKind.DrawPile, IntValue = dpc };
+        if (discardHit != null && TryReadPileCount("DiscardPile", out var dipc))
+            return new HitResult { Kind = HitKind.DiscardPile, IntValue = dipc };
+        if (exhaustHit != null && TryReadPileCount("ExhaustPile", out var epc))
+            return new HitResult { Kind = HitKind.ExhaustPile, IntValue = epc };
 
         return default;
 
@@ -152,7 +195,7 @@ public sealed partial class StatusPinger : Node
                     if (rect.HasPoint(mousePos))
                     {
                         var d = (nc.GlobalPosition - mousePos).Length();
-                        if (d < bestEnemyDist) { bestEnemyDist = d; bestEnemy = nc.GlobalPosition; }
+                        if (d < bestEnemyDist) { bestEnemyDist = d; bestEnemyNode = nc; }
                     }
                 }
             }
@@ -188,6 +231,10 @@ public sealed partial class StatusPinger : Node
                 if (typeName == "NTopBarGold" && ctrl.GetGlobalRect().HasPoint(mousePos)) goldHit = ctrl;
                 else if (typeName == "NTopBarHp" && ctrl.GetGlobalRect().HasPoint(mousePos)) hpHit = ctrl;
                 else if (typeName == "NEnergyCounter" && ctrl.GetGlobalRect().HasPoint(mousePos)) energyHit = ctrl;
+                else if (typeName == "NTopBarDeckButton" && ctrl.GetGlobalRect().HasPoint(mousePos)) deckHit = ctrl;
+                else if (typeName == "NDrawPileButton" && ctrl.GetGlobalRect().HasPoint(mousePos)) drawHit = ctrl;
+                else if (typeName == "NDiscardPileButton" && ctrl.GetGlobalRect().HasPoint(mousePos)) discardHit = ctrl;
+                else if (typeName == "NExhaustPileButton" && ctrl.GetGlobalRect().HasPoint(mousePos)) exhaustHit = ctrl;
             }
             foreach (var c in n.GetChildren()) Walk(c);
         }
@@ -211,9 +258,9 @@ public sealed partial class StatusPinger : Node
         return false;
     }
 
-    private static bool TryReadHp(Control hp, out int current, out int max)
+    private static bool TryReadHp(Control hp, out int current, out int max, out int block)
     {
-        current = 0; max = 0;
+        current = 0; max = 0; block = 0;
         try
         {
             var playerField = hp.GetType().GetField("_player", PrivInst);
@@ -224,9 +271,93 @@ public sealed partial class StatusPinger : Node
             var ct = creature.GetType();
             var cur = ct.GetProperty("CurrentHp")?.GetValue(creature);
             var mx  = ct.GetProperty("MaxHp")?.GetValue(creature);
-            if (cur is int ci && mx is int mi) { current = ci; max = mi; return true; }
+            var bk  = ct.GetProperty("Block")?.GetValue(creature);
+            if (cur is int ci && mx is int mi) { current = ci; max = mi; }
+            else return false;
+            if (bk is int bi) block = bi;
+            return true;
         }
         catch (Exception ex) { GD.Print($"[VR][Pinger] hp read fail: {ex.Message}"); }
+        return false;
+    }
+
+    private static bool TryReadCreatureHp(NCreature nc, out int current, out int max)
+    {
+        current = 0; max = 0;
+        try
+        {
+            var c = nc.Entity;
+            if (c == null) return false;
+            var ct = c.GetType();
+            var cur = ct.GetProperty("CurrentHp")?.GetValue(c);
+            var mx  = ct.GetProperty("MaxHp")?.GetValue(c);
+            if (cur is int ci && mx is int mi) { current = ci; max = mi; return true; }
+        }
+        catch (Exception ex) { GD.Print($"[VR][Pinger] enemy hp read fail: {ex.Message}"); }
+        return false;
+    }
+
+    private static bool TryReadDeckCount(Control deck, out int count)
+    {
+        count = 0;
+        try
+        {
+            var pileField = deck.GetType().GetField("_pile", PrivInst);
+            var pile = pileField?.GetValue(deck);
+            // CardPile.Cards: IReadOnlyList<CardModel>
+            var cardsProp = pile?.GetType().GetProperty("Cards");
+            if (cardsProp?.GetValue(pile) is System.Collections.IEnumerable e)
+            {
+                foreach (var _ in e) count++;
+                return true;
+            }
+        }
+        catch (Exception ex) { GD.Print($"[VR][Pinger] deck count fail: {ex.Message}"); }
+        return false;
+    }
+
+    /// <summary>Read a combat pile count by name from local player's PlayerCombatState.</summary>
+    private static bool TryReadPileCount(string pileName, out int count)
+    {
+        count = 0;
+        try
+        {
+            // Use existing resolver to find the local player.
+            var rmType = Type.GetType("MegaCrit.Sts2.Core.Runs.RunManager, sts2");
+            var rm = rmType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var stateProp = rmType?.GetProperty("State", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var state = stateProp?.GetValue(rm);
+            var playersProp = state?.GetType().GetProperty("Players");
+            if (playersProp?.GetValue(state) is not System.Collections.IEnumerable players) return false;
+
+            // Find the local player by NetId (PlayerSlotResolver does this for combat;
+            // here we just need *a* local player — single-player has only one, MP needs
+            // matching. For simplicity in V1, take the first; pile counts are local-side
+            // anyway and SP/host case dominates our use).
+            var localId = VoiceRoulette.Net.PlayerSlotResolver.ResolveLocalPlayerId();
+            object? player = null;
+            foreach (var p in players)
+            {
+                if (localId is ulong me)
+                {
+                    var pNet = p.GetType().GetProperty("NetId")?.GetValue(p);
+                    if (pNet is ulong pn && pn == me) { player = p; break; }
+                }
+                player ??= p;  // fallback: first player
+            }
+            if (player == null) return false;
+
+            var pcsProp = player.GetType().GetProperty("PlayerCombatState");
+            var pcs = pcsProp?.GetValue(player);
+            var pile = pcs?.GetType().GetProperty(pileName)?.GetValue(pcs);
+            var cardsProp = pile?.GetType().GetProperty("Cards");
+            if (cardsProp?.GetValue(pile) is System.Collections.IEnumerable e)
+            {
+                foreach (var _ in e) count++;
+                return true;
+            }
+        }
+        catch (Exception ex) { GD.Print($"[VR][Pinger] {pileName} count fail: {ex.Message}"); }
         return false;
     }
 
