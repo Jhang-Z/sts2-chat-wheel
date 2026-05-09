@@ -208,24 +208,39 @@ public sealed partial class SLCoordinator : Node
         var ctx = SLPostMenu.CapturePreDisconnect();
         GD.Print($"[VR][SL] captured role={ctx.Role} platform={ctx.Platform} hostSteamId={ctx.HostSteamId}");
 
-        Task? teardownTask;
-        try
+        // CRITICAL: only Host and SP actively trigger ReturnToMainMenuAfterRun.
+        // Clients ride the natural "host disconnected" flow — when host's
+        // teardown disconnects them, the game's own handler returns them
+        // to main menu, where our auto-rejoin chain takes over.
+        //
+        // If client also called ReturnToMainMenuAfterRun, it would race the
+        // network-disconnect handler and one of the two teardown paths
+        // would clobber the auto-rejoin scheduling.
+        Task? teardownTask = null;
+        if (ctx.Role != SLRole.Client)
         {
-            var nGameType = Type.GetType("MegaCrit.Sts2.Core.Nodes.NGame, sts2");
-            var instance = nGameType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-            var method = nGameType?.GetMethod("ReturnToMainMenuAfterRun", BindingFlags.Public | BindingFlags.Instance);
-            if (instance == null || method == null)
+            try
             {
-                GD.PrintErr("[VR][SL] NGame.ReturnToMainMenuAfterRun not resolvable");
+                var nGameType = Type.GetType("MegaCrit.Sts2.Core.Nodes.NGame, sts2");
+                var instance = nGameType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+                var method = nGameType?.GetMethod("ReturnToMainMenuAfterRun", BindingFlags.Public | BindingFlags.Instance);
+                if (instance == null || method == null)
+                {
+                    GD.PrintErr("[VR][SL] NGame.ReturnToMainMenuAfterRun not resolvable");
+                    return;
+                }
+                teardownTask = method.Invoke(instance, null) as Task;
+                GD.Print("[VR][SL] NGame.ReturnToMainMenuAfterRun() invoked");
+            }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[VR][SL] execute failed: {ex.GetType().Name}: {ex.Message}");
                 return;
             }
-            teardownTask = method.Invoke(instance, null) as Task;
-            GD.Print("[VR][SL] NGame.ReturnToMainMenuAfterRun() invoked");
         }
-        catch (Exception ex)
+        else
         {
-            GD.PrintErr($"[VR][SL] execute failed: {ex.GetType().Name}: {ex.Message}");
-            return;
+            GD.Print("[VR][SL] client: skipping voluntary teardown — will ride host's disconnect");
         }
 
         _ = SLPostMenu.AfterMenuChainAsync(teardownTask, ctx);

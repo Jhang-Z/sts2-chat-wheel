@@ -74,14 +74,25 @@ internal static class SLPostMenu
         try
         {
             if (teardownTask != null) await teardownTask;
-            GD.Print($"[VR][SL] return-to-menu Task completed — branching for role={ctx.Role}");
+            GD.Print($"[VR][SL] post-menu chain start — role={ctx.Role} (teardownTask={(teardownTask != null ? "awaited" : "skipped, riding host disconnect")})");
 
-            var nMainMenu = await WaitForMainMenuAsync(timeoutMs: 5000);
+            // Clients have to wait longer because the natural host-disconnect
+            // flow takes time: TCP timeout → CleanUp → scene transition →
+            // possibly an error popup → finally NMainMenu. 15s covers most
+            // cases. Host/SP are immediate (we just teardown'd).
+            var menuWaitMs = ctx.Role == SLRole.Client ? 15000 : 5000;
+            var nMainMenu = await WaitForMainMenuAsync(menuWaitMs);
             if (nMainMenu == null)
             {
-                GD.PrintErr("[VR][SL] NMainMenu not found after main-menu return");
+                GD.PrintErr($"[VR][SL] NMainMenu not found within {menuWaitMs}ms");
                 return;
             }
+            GD.Print("[VR][SL] NMainMenu detected; clearing any modal popups before continuing");
+
+            // The "host disconnected" error popup may be modal-blocking.
+            // Clear it via NModalContainer.Clear() so subsequent UI invocations
+            // (JoinGame chain, etc.) aren't intercepted.
+            TryClearModalPopups();
 
             switch (ctx.Role)
             {
@@ -234,6 +245,27 @@ internal static class SLPostMenu
         {
             GD.PrintErr($"[VR][SL] LoadAndCanonicalize threw: {ex.Message}");
             return null;
+        }
+    }
+
+    private static void TryClearModalPopups()
+    {
+        try
+        {
+            var mcType = Type.GetType("MegaCrit.Sts2.Core.Nodes.CommonUi.NModalContainer, sts2");
+            var instance = mcType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var clear = mcType?.GetMethod("Clear", BindingFlags.Public | BindingFlags.Instance);
+            if (instance == null || clear == null)
+            {
+                GD.Print("[VR][SL] NModalContainer.Clear unavailable — skipping");
+                return;
+            }
+            clear.Invoke(instance, null);
+            GD.Print("[VR][SL] cleared modal popups");
+        }
+        catch (Exception ex)
+        {
+            GD.Print($"[VR][SL] TryClearModalPopups: {ex.Message} (non-fatal)");
         }
     }
 
