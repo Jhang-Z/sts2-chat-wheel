@@ -136,7 +136,13 @@ internal static class SLPostMenu
     {
         GD.Print("[VR][SL] host: loading multiplayer save + re-hosting");
 
-        // 1. Load the multiplayer save from disk (latest autosave from when
+        // 1. Steam needs a beat after CleanUp to fully release the previous
+        //    lobby/socket. If we re-host too fast, the new Steam lobby gets
+        //    created in a half-broken state — the host UI shows the load
+        //    lobby but clients get "connection timeout" trying to join.
+        await Task.Delay(2500);
+
+        // 2. Load the multiplayer save from disk (latest autosave from when
         //    the previous room ended).
         var saveDataResult = TryLoadMultiplayerSave(ctx.LocalNetId);
         if (saveDataResult is not { } saveData)
@@ -145,10 +151,6 @@ internal static class SLPostMenu
             return;
         }
 
-        // 2. Fire NMultiplayerSubmenu.StartHost(serializableRun). This:
-        //    a) creates NetHostGameService + opens new Steam lobby
-        //    b) pushes NMultiplayerLoadGameScreen on the submenu stack
-        //    c) eventually calls NMultiplayerLoadGameScreen.InitializeAsHost
         var submenuType = Type.GetType("MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMultiplayerSubmenu, sts2");
         if (submenuType == null) { GD.PrintErr("[VR][SL] NMultiplayerSubmenu type not loadable"); return; }
 
@@ -158,12 +160,41 @@ internal static class SLPostMenu
         var submenu = await WaitForDescendantAsync(submenuType, timeoutMs: 4000);
         if (submenu == null) { GD.PrintErr("[VR][SL] NMultiplayerSubmenu not found"); return; }
 
-        var startHost = submenuType.GetMethod("StartHost", BindingFlags.Public | BindingFlags.Instance);
-        if (startHost == null) { GD.PrintErr("[VR][SL] StartHost not found"); return; }
-        startHost.Invoke(submenu, new object?[] { saveData });
-        GD.Print("[VR][SL] host: NMultiplayerSubmenu.StartHost invoked");
+        // 3. CRITICAL: use StartHostAsync (private async) instead of the
+        //    public StartHost wrapper. StartHost is fire-and-forget — it
+        //    schedules StartHostAsync but returns immediately, so we'd
+        //    proceed to SetReady before the Steam lobby is actually bound.
+        //    The async version awaits StartSteamHost, which only resolves
+        //    after Steam confirms the lobby is created and accepting
+        //    connections.
+        var startHostAsync = submenuType.GetMethod("StartHostAsync",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (startHostAsync != null)
+        {
+            try
+            {
+                if (startHostAsync.Invoke(submenu, new object?[] { saveData }) is Task hostTask)
+                {
+                    GD.Print("[VR][SL] host: awaiting StartHostAsync (Steam lobby creation)…");
+                    await hostTask;
+                    GD.Print("[VR][SL] host: StartHostAsync completed — Steam lobby is bound");
+                }
+            }
+            catch (Exception ex)
+            {
+                GD.PrintErr($"[VR][SL] host: StartHostAsync threw {ex.GetType().Name}: {ex.Message}");
+                return;
+            }
+        }
+        else
+        {
+            GD.PrintErr("[VR][SL] host: StartHostAsync not found, falling back to fire-and-forget StartHost");
+            var startHost = submenuType.GetMethod("StartHost", BindingFlags.Public | BindingFlags.Instance);
+            if (startHost == null) { GD.PrintErr("[VR][SL] StartHost not found either"); return; }
+            startHost.Invoke(submenu, new object?[] { saveData });
+        }
 
-        // 3. Wait for NMultiplayerLoadGameScreen to appear, then SetReady(true).
+        // 4. Wait for NMultiplayerLoadGameScreen to appear, then SetReady(true).
         await ReadyUpInLoadLobbyAsync();
     }
 
