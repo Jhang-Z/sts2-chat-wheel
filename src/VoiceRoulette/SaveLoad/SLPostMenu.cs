@@ -1,0 +1,302 @@
+// Post-disconnect chain: after ReturnToMainMenuAfterRun lands at the main
+// menu, this handles the auto-rehost (host) or auto-rejoin (Steam client)
+// flow so the SL feels seamless. Each branch ends with the player landed
+// in NMultiplayerLoadGameScreen with SetReady(true) — when all peers are
+// ready, the game's own BeginRunForAllPlayersIfAllReady fires and the run
+// resumes from the on-disk autosave.
+//
+// Steam-only — ENet auto-rejoin is not supported (no stable host endpoint).
+// ENet sessions fall through to "stranded at main menu" mode.
+
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using System.Threading.Tasks;
+using Godot;
+using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Runs;
+
+namespace VoiceRoulette.SaveLoad;
+
+internal enum SLRole { Singleplayer, Host, Client, Unknown }
+internal enum SLPlatform { None = 0, Steam = 1 }
+
+internal sealed class SLContext
+{
+    public SLRole Role;
+    public SLPlatform Platform;
+    public ulong HostSteamId;   // for Client only
+    public ulong LocalNetId;
+}
+
+internal static class SLPostMenu
+{
+    public static SLContext CapturePreDisconnect()
+    {
+        var ctx = new SLContext { Role = SLRole.Unknown, Platform = SLPlatform.None };
+        try
+        {
+            var rm = RunManager.Instance;
+            if (rm == null) { ctx.Role = SLRole.Singleplayer; return ctx; }
+            var ns = rm.NetService;
+            if (ns == null) { ctx.Role = SLRole.Singleplayer; return ctx; }
+            ctx.LocalNetId = ns.NetId;
+
+            var typeProp = ns.GetType().GetProperty("Type");
+            var nsType = typeProp?.GetValue(ns)?.ToString();
+            ctx.Role = nsType switch
+            {
+                "Singleplayer" => SLRole.Singleplayer,
+                "Host"         => SLRole.Host,
+                "Client"       => SLRole.Client,
+                _              => SLRole.Unknown,
+            };
+
+            var platProp = ns.GetType().GetProperty("Platform");
+            var platVal = platProp?.GetValue(ns)?.ToString();
+            ctx.Platform = platVal == "Steam" ? SLPlatform.Steam : SLPlatform.None;
+
+            // For Steam clients, NetClientGameService.HostNetId is the host's
+            // Steam ID — stable forever. We use it to find the host's NEW
+            // lobby after they re-host.
+            if (ctx.Role == SLRole.Client)
+            {
+                var hostProp = ns.GetType().GetProperty("HostNetId");
+                if (hostProp?.GetValue(ns) is ulong h) ctx.HostSteamId = h;
+            }
+        }
+        catch (Exception ex) { GD.PrintErr($"[VR][SL] capture failed: {ex.Message}"); }
+        return ctx;
+    }
+
+    public static async Task AfterMenuChainAsync(Task? teardownTask, SLContext ctx)
+    {
+        try
+        {
+            if (teardownTask != null) await teardownTask;
+            GD.Print($"[VR][SL] return-to-menu Task completed — branching for role={ctx.Role}");
+
+            var nMainMenu = await WaitForMainMenuAsync(timeoutMs: 5000);
+            if (nMainMenu == null)
+            {
+                GD.PrintErr("[VR][SL] NMainMenu not found after main-menu return");
+                return;
+            }
+
+            switch (ctx.Role)
+            {
+                case SLRole.Singleplayer:
+                    await InvokeContinueAsync(nMainMenu);
+                    break;
+
+                case SLRole.Host when ctx.Platform == SLPlatform.Steam:
+                    await HostRehostAsync(nMainMenu, ctx);
+                    break;
+
+                case SLRole.Client when ctx.Platform == SLPlatform.Steam:
+                    await ClientRejoinAsync(nMainMenu, ctx);
+                    break;
+
+                default:
+                    GD.Print($"[VR][SL] role={ctx.Role} platform={ctx.Platform} — auto-rejoin not supported, stopping at main menu");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[VR][SL] AfterMenuChain failed: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+        }
+    }
+
+    // ── Singleplayer continue ─────────────────────────────────────────────
+
+    private static async Task InvokeContinueAsync(Node nMainMenu)
+    {
+        var method = nMainMenu.GetType().GetMethod("OnContinueButtonPressedAsync",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (method == null) { GD.PrintErr("[VR][SL] OnContinueButtonPressedAsync missing"); return; }
+        if (method.Invoke(nMainMenu, null) is Task t) await t;
+        GD.Print("[VR][SL] SP auto-continue completed");
+    }
+
+    // ── Host: re-host with the on-disk save ───────────────────────────────
+
+    private static async Task HostRehostAsync(Node nMainMenu, SLContext ctx)
+    {
+        GD.Print("[VR][SL] host: loading multiplayer save + re-hosting");
+
+        // 1. Load the multiplayer save from disk (latest autosave from when
+        //    the previous room ended).
+        var saveDataResult = TryLoadMultiplayerSave(ctx.LocalNetId);
+        if (saveDataResult is not { } saveData)
+        {
+            GD.PrintErr("[VR][SL] host: multiplayer save load failed — abort");
+            return;
+        }
+
+        // 2. Fire NMultiplayerSubmenu.StartHost(serializableRun). This:
+        //    a) creates NetHostGameService + opens new Steam lobby
+        //    b) pushes NMultiplayerLoadGameScreen on the submenu stack
+        //    c) eventually calls NMultiplayerLoadGameScreen.InitializeAsHost
+        var submenuType = Type.GetType("MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMultiplayerSubmenu, sts2");
+        if (submenuType == null) { GD.PrintErr("[VR][SL] NMultiplayerSubmenu type not loadable"); return; }
+
+        // Open multiplayer submenu first so its lifecycle runs.
+        await OpenMultiplayerSubmenuAsync(nMainMenu);
+
+        var submenu = await WaitForDescendantAsync(submenuType, timeoutMs: 4000);
+        if (submenu == null) { GD.PrintErr("[VR][SL] NMultiplayerSubmenu not found"); return; }
+
+        var startHost = submenuType.GetMethod("StartHost", BindingFlags.Public | BindingFlags.Instance);
+        if (startHost == null) { GD.PrintErr("[VR][SL] StartHost not found"); return; }
+        startHost.Invoke(submenu, new object?[] { saveData });
+        GD.Print("[VR][SL] host: NMultiplayerSubmenu.StartHost invoked");
+
+        // 3. Wait for NMultiplayerLoadGameScreen to appear, then SetReady(true).
+        await ReadyUpInLoadLobbyAsync();
+    }
+
+    // ── Client: rejoin host's new Steam lobby ─────────────────────────────
+
+    private static async Task ClientRejoinAsync(Node nMainMenu, SLContext ctx)
+    {
+        if (ctx.HostSteamId == 0)
+        {
+            GD.PrintErr("[VR][SL] client: HostSteamId not captured — abort");
+            return;
+        }
+        GD.Print($"[VR][SL] client: will rejoin Steam friend {ctx.HostSteamId}");
+
+        // Give the host time to (a) fully tear down, (b) bring up new lobby,
+        // (c) Steam friend status to update. 2.5s baseline + retry with backoff.
+        await Task.Delay(2500);
+
+        // Build initializer pointing at the host by their stable Steam ID.
+        var initType = Type.GetType("MegaCrit.Sts2.Core.Multiplayer.Connection.SteamClientConnectionInitializer, sts2");
+        if (initType == null) { GD.PrintErr("[VR][SL] SteamClientConnectionInitializer type not loadable"); return; }
+        var fromPlayer = initType.GetMethod("FromPlayer", BindingFlags.Public | BindingFlags.Static);
+        if (fromPlayer == null) { GD.PrintErr("[VR][SL] FromPlayer factory not found"); return; }
+
+        // Try the JoinGame chain on NMainMenu — same code path as clicking a
+        // friend in the friends list.
+        var joinGame = nMainMenu.GetType().GetMethod("JoinGame",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (joinGame == null) { GD.PrintErr("[VR][SL] NMainMenu.JoinGame not found"); return; }
+
+        for (var attempt = 1; attempt <= 8; attempt++)
+        {
+            try
+            {
+                var initializer = fromPlayer.Invoke(null, new object?[] { ctx.HostSteamId });
+                GD.Print($"[VR][SL] client: connection attempt {attempt} via Steam friend {ctx.HostSteamId}");
+                if (joinGame.Invoke(nMainMenu, new[] { initializer }) is Task joinTask)
+                {
+                    await joinTask;
+                    GD.Print("[VR][SL] client: JoinGame completed");
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                GD.Print($"[VR][SL] client: attempt {attempt} threw {ex.GetType().Name}: {ex.Message}");
+                if (attempt == 8) { GD.PrintErr("[VR][SL] client: all rejoin attempts failed"); return; }
+                await Task.Delay(1500);
+            }
+        }
+
+        // Once connected and on NMultiplayerLoadGameScreen, ready up.
+        await ReadyUpInLoadLobbyAsync();
+    }
+
+    // ── Shared helpers ────────────────────────────────────────────────────
+
+    private static object? TryLoadMultiplayerSave(ulong localNetId)
+    {
+        try
+        {
+            var smType = Type.GetType("MegaCrit.Sts2.Core.Saves.SaveManager, sts2");
+            var sm = smType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var loadMethod = smType?.GetMethod("LoadAndCanonicalizeMultiplayerRunSave", BindingFlags.Public | BindingFlags.Instance);
+            if (sm == null || loadMethod == null) { GD.PrintErr("[VR][SL] LoadAndCanonicalizeMultiplayerRunSave missing"); return null; }
+            var result = loadMethod.Invoke(sm, new object?[] { localNetId });
+            if (result == null) return null;
+            var rt = result.GetType();
+            var success = (bool)(rt.GetProperty("Success")?.GetValue(result) ?? false);
+            if (!success)
+            {
+                var err = rt.GetProperty("ErrorMessage")?.GetValue(result)?.ToString() ?? "(no message)";
+                GD.PrintErr($"[VR][SL] save read not successful: {err}");
+                return null;
+            }
+            return rt.GetProperty("SaveData")?.GetValue(result);
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[VR][SL] LoadAndCanonicalize threw: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static async Task<Node?> WaitForMainMenuAsync(int timeoutMs)
+    {
+        var nMainMenuType = Type.GetType("MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMainMenu, sts2");
+        if (nMainMenuType == null) return null;
+        return await WaitForDescendantAsync(nMainMenuType, timeoutMs);
+    }
+
+    private static async Task<Node?> WaitForDescendantAsync(Type type, int timeoutMs)
+    {
+        var tree = (SceneTree)Engine.GetMainLoop();
+        var deadline = Time.GetTicksMsec() + (ulong)timeoutMs;
+        while (Time.GetTicksMsec() < deadline)
+        {
+            var hit = FindDescendantOfType(tree.Root, type);
+            if (hit != null) return hit;
+            await Task.Delay(100);
+        }
+        return null;
+    }
+
+    private static Node? FindDescendantOfType(Node n, Type t)
+    {
+        if (t.IsInstanceOfType(n)) return n;
+        foreach (var c in n.GetChildren())
+        {
+            var hit = FindDescendantOfType(c, t);
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    private static async Task OpenMultiplayerSubmenuAsync(Node nMainMenu)
+    {
+        var open = nMainMenu.GetType().GetMethod("OpenMultiplayerSubmenu",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            null, Type.EmptyTypes, null);
+        if (open == null) { GD.Print("[VR][SL] OpenMultiplayerSubmenu(no-args) not found, skipping"); return; }
+        open.Invoke(nMainMenu, null);
+        await Task.Delay(300);  // let the submenu push animation settle
+    }
+
+    /// <summary>
+    /// After landing in NMultiplayerLoadGameScreen, programmatically set
+    /// the lobby ready so the host's BeginRunForAllPlayersIfAllReady fires
+    /// when everyone's ready.
+    /// </summary>
+    private static async Task ReadyUpInLoadLobbyAsync()
+    {
+        var screenType = Type.GetType("MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen, sts2");
+        if (screenType == null) { GD.PrintErr("[VR][SL] NMultiplayerLoadGameScreen type not loadable"); return; }
+        var screen = await WaitForDescendantAsync(screenType, timeoutMs: 8000);
+        if (screen == null) { GD.PrintErr("[VR][SL] NMultiplayerLoadGameScreen never appeared — manual ready required"); return; }
+
+        // Pull the LoadRunLobby off the screen and call SetReady(true).
+        var lobbyField = screenType.GetField("_runLobby", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var lobby = lobbyField?.GetValue(screen);
+        if (lobby == null) { GD.PrintErr("[VR][SL] LoadRunLobby field not accessible"); return; }
+        var setReady = lobby.GetType().GetMethod("SetReady", BindingFlags.Public | BindingFlags.Instance);
+        if (setReady == null) { GD.PrintErr("[VR][SL] LoadRunLobby.SetReady not found"); return; }
+        setReady.Invoke(lobby, new object?[] { true });
+        GD.Print("[VR][SL] auto-ready set on LoadRunLobby");
+    }
+}

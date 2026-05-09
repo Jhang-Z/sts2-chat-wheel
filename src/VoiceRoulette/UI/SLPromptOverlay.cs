@@ -22,8 +22,6 @@ public sealed partial class SLPromptOverlay : CanvasLayer
     private Button? _confirmBtn;
     private Button? _vetoBtn;
 
-    private double _deadlineSec;
-    private bool _counting;
     private SceneTree? _tree;
 
     public Action? OnConfirmClicked;
@@ -138,27 +136,33 @@ public sealed partial class SLPromptOverlay : CanvasLayer
     }
 
     /// <summary>
-    /// Show the vote prompt for `seconds`. `byMe` controls the wording:
-    /// proposer sees "已发起 SL 请求", others see "队友请求 SL".
+    /// Show the vote prompt with a live "X / N" accept counter.
+    /// `byMe` controls the wording: proposer sees a softer message,
+    /// non-proposer sees an active vote-call message.
     /// </summary>
-    public void Show(bool byMe, double seconds)
+    public void Show(bool byMe, int expectedPeerCount, int alreadyAccepted)
     {
         if (_root == null || _title == null) Start();
         if (_title != null)
-            _title.Text = byMe ? "已发起 SL — 队友可在倒计时内反对" : "队友请求 SL";
+            _title.Text = byMe
+                ? "已发起 SL — 等待队友确认"
+                : "队友请求 SL — 请确认";
         if (_hint != null)
-            _hint.Text = byMe
-                ? "[Esc] 取消    倒计时结束后自动执行"
-                : "[Enter] 同意    [Esc] 反对    超时视为同意";
-        _deadlineSec = Time.GetTicksMsec() / 1000.0 + seconds;
-        _counting = true;
+            _hint.Text = "[立即执行 SL] 同意    [取消] 反对";
+        SetCounter(alreadyAccepted, expectedPeerCount);
         if (_root != null) _root.Visible = true;
-        UpdateCountdown();
+    }
+
+    /// <summary>Update the "X / N" tally label.</summary>
+    public void SetCounter(int accepted, int total)
+    {
+        if (_countdown == null) Start();
+        if (_countdown != null)
+            _countdown.Text = $"已确认 {accepted} / {total}";
     }
 
     public new void Hide()
     {
-        _counting = false;
         if (_root != null) _root.Visible = false;
     }
 
@@ -166,7 +170,6 @@ public sealed partial class SLPromptOverlay : CanvasLayer
     public void HideWithMessage(string message, double seconds)
     {
         if (_root == null) Start();
-        _counting = false;
         if (_title != null) _title.Text = message;
         if (_hint != null) _hint.Text = "";
         if (_countdown != null) _countdown.Text = "";
@@ -177,17 +180,5 @@ public sealed partial class SLPromptOverlay : CanvasLayer
         timer.Timeout += () => { if (_root != null) _root.Visible = false; };
     }
 
-    public override void _Process(double delta)
-    {
-        if (!_counting) return;
-        UpdateCountdown();
-    }
-
-    private void UpdateCountdown()
-    {
-        if (_countdown == null) return;
-        var nowSec = Time.GetTicksMsec() / 1000.0;
-        var remaining = System.Math.Max(0.0, _deadlineSec - nowSec);
-        _countdown.Text = remaining.ToString("F1");
-    }
+    // (countdown logic removed — vote tally is event-driven)
 }
