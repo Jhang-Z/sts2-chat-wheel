@@ -6,6 +6,7 @@ public sealed class ConfigSchema
 {
     public string Hotkey { get; set; } = "Y";
     public string SettingsHotkey { get; set; } = "Semicolon";
+    public string SLHotkey { get; set; } = "R";  // Cmd/Ctrl+Shift+R triggers Save&Load
     public DoubaoConfig Doubao { get; set; } = new();
     // Doubao TTS 2.0 — uranus voices (爽快思思·女声·轻快). Emotion is controlled by
     // an inline bracketed prompt prepended to the text (handled in DoubaoClient), NOT by

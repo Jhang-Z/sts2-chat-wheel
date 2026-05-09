@@ -18,6 +18,7 @@ using VoiceRoulette.Dispatch;
 using VoiceRoulette.Input;
 using VoiceRoulette.Lines;
 using VoiceRoulette.Net;
+using VoiceRoulette.SaveLoad;
 using VoiceRoulette.TTS;
 using VoiceRoulette.UI;
 
@@ -69,6 +70,9 @@ public static class Plugin
             var analyzer = new HandAnalyzer();
             var threat = new ThreatAnalyzer();
             var markerInput = new VoiceRoulette.Input.MarkerInput();
+            var slCoordinator = new SLCoordinator();
+            var slPrompt = new SLPromptOverlay();
+            var slInput = new VoiceRoulette.Input.SLInput();
             INetSync net = new AdaptiveNetSync();
             GD.Print($"[VR] NetSync = {net.GetType().Name}");
 
@@ -156,6 +160,9 @@ public static class Plugin
                     sceneRoot.AddChild(analyzer);
                     sceneRoot.AddChild(threat);
                     sceneRoot.AddChild(markerInput);
+                    sceneRoot.AddChild(slCoordinator);
+                    sceneRoot.AddChild(slPrompt);
+                    sceneRoot.AddChild(slInput);
                     GD.Print($"[VR] nodes attached.");
 
                     wheel.Initialize(modDir: ModDir);
@@ -177,6 +184,17 @@ public static class Plugin
                     analyzer.Start(getLocalSlot(), sendPing);
                     threat.Start(sendPing);
                     marker.Start();
+                    slPrompt.Start();
+                    slCoordinator.AttachUi(slPrompt);
+                    slCoordinator.Start();
+                    var slKey = ParseKey(config.Schema.SLHotkey, Key.R);
+                    slInput.Start(
+                        hotkey: slKey,
+                        onTrigger: () => slCoordinator.RequestSLLocally(),
+                        onAccept:  () => slCoordinator.AcceptLocally(),
+                        onVeto:    () => slCoordinator.VetoLocally(),
+                        isPromptActive: () => slCoordinator.IsPromptActive);
+
                     markerInput.Start(enemyPos =>
                     {
                         // F+click on enemy: combine three things into one
