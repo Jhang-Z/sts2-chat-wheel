@@ -180,28 +180,12 @@ public static class Plugin
                         },
                         previewCallback: preview,
                         toggleKeyHint: KeyToHint(settingsKey));
-                    pinger.Start(sendPing);
-                    analyzer.Start(getLocalSlot(), sendPing);
-                    threat.Start(sendPing);
-                    marker.Start();
-                    slPrompt.Start();
-                    slPrompt.OnConfirmClicked = () => slCoordinator.AcceptLocally();
-                    slPrompt.OnVetoClicked    = () => slCoordinator.VetoLocally();
-                    slCoordinator.AttachUi(slPrompt);
-                    slCoordinator.Start();
-                    var slKey = ParseKey(config.Schema.SLHotkey, Key.R);
-                    slInput.Start(
-                        hotkey: slKey,
-                        onTrigger: () => slCoordinator.RequestSLLocally(),
-                        onAccept:  () => slCoordinator.AcceptLocally(),
-                        onVeto:    () => slCoordinator.VetoLocally(),
-                        isPromptActive: () => slCoordinator.IsPromptActive);
-
-                    markerInput.Start(enemyPos =>
+                    // Build the enemy-mark callback once and share it between
+                    // the unified click handler (StatusPinger) and any future
+                    // call sites. Combines local arrow + net broadcast +
+                    // voice ping + game's UI click sfx.
+                    Action<Vector2> markEnemy = enemyPos =>
                     {
-                        // F+click on enemy: combine three things into one
-                        // gesture — local arrow, network broadcast, voice
-                        // ping (bubble + audio), and the game's UI click sfx.
                         var slot = getLocalSlot();
                         marker.Show(enemyPos);
                         var wire = new MarkerWire(
@@ -220,7 +204,28 @@ public static class Plugin
                         {
                             GD.PrintErr($"[VR][Marker] sfx failed: {ex.Message}");
                         }
-                    });
+                    };
+
+                    pinger.Start(sendPing, markEnemy);
+                    analyzer.Start(getLocalSlot(), sendPing);
+                    threat.Start(sendPing);
+                    marker.Start();
+                    slPrompt.Start();
+                    slPrompt.OnConfirmClicked = () => slCoordinator.AcceptLocally();
+                    slPrompt.OnVetoClicked    = () => slCoordinator.VetoLocally();
+                    slCoordinator.AttachUi(slPrompt);
+                    slCoordinator.Start();
+                    var slKey = ParseKey(config.Schema.SLHotkey, Key.R);
+                    slInput.Start(
+                        hotkey: slKey,
+                        onTrigger: () => slCoordinator.RequestSLLocally(),
+                        onAccept:  () => slCoordinator.AcceptLocally(),
+                        onVeto:    () => slCoordinator.VetoLocally(),
+                        isPromptActive: () => slCoordinator.IsPromptActive);
+
+                    // MarkerInput's standalone polling is no longer started —
+                    // StatusPinger handles enemy clicks now via the unified
+                    // Cmd/Ctrl+RightClick gesture (see markEnemy above).
                 }
                 catch (Exception ex)
                 {
