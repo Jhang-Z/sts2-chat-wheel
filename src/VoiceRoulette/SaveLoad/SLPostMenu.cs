@@ -178,45 +178,66 @@ internal static class SLPostMenu
         }
         GD.Print($"[VR][SL] client: will rejoin Steam friend {ctx.HostSteamId}");
 
-        // Give the host time to (a) fully tear down, (b) bring up new lobby,
-        // (c) Steam friend status to update. 2.5s baseline + retry with backoff.
-        await Task.Delay(2500);
+        // Initial wait — host needs time to finish teardown + open new lobby
+        // + Steam needs time to propagate the new "in lobby" state to the
+        // friends list. Mac Steam clients are noticeably slower than Win, so
+        // bump generously.
+        await Task.Delay(4000);
 
-        // Build initializer pointing at the host by their stable Steam ID.
         var initType = Type.GetType("MegaCrit.Sts2.Core.Multiplayer.Connection.SteamClientConnectionInitializer, sts2");
         if (initType == null) { GD.PrintErr("[VR][SL] SteamClientConnectionInitializer type not loadable"); return; }
         var fromPlayer = initType.GetMethod("FromPlayer", BindingFlags.Public | BindingFlags.Static);
         if (fromPlayer == null) { GD.PrintErr("[VR][SL] FromPlayer factory not found"); return; }
 
-        // Try the JoinGame chain on NMainMenu — same code path as clicking a
-        // friend in the friends list.
         var joinGame = nMainMenu.GetType().GetMethod("JoinGame",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         if (joinGame == null) { GD.PrintErr("[VR][SL] NMainMenu.JoinGame not found"); return; }
 
-        for (var attempt = 1; attempt <= 8; attempt++)
+        var loadScreenType = Type.GetType("MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen, sts2");
+        if (loadScreenType == null) { GD.PrintErr("[VR][SL] NMultiplayerLoadGameScreen type not loadable"); return; }
+
+        const int MaxAttempts = 6;
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
         {
+            // CRITICAL: JoinGameAsync does NOT throw on connection failure —
+            // it catches internally, shows an NErrorPopup ("连接超时"), and
+            // calls Disconnect. So awaiting the task always completes.
+            // The reliable success signal is whether NMultiplayerLoadGameScreen
+            // ends up on screen.
+            //
+            // Between attempts we clear any leftover error popup so the next
+            // FromPlayer/JoinGame call isn't blocked by a modal.
+            TryClearModalPopups();
+
             try
             {
                 var initializer = fromPlayer.Invoke(null, new object?[] { ctx.HostSteamId });
-                GD.Print($"[VR][SL] client: connection attempt {attempt} via Steam friend {ctx.HostSteamId}");
+                GD.Print($"[VR][SL] client: connection attempt {attempt}/{MaxAttempts} via Steam friend {ctx.HostSteamId}");
                 if (joinGame.Invoke(nMainMenu, new[] { initializer }) is Task joinTask)
-                {
                     await joinTask;
-                    GD.Print("[VR][SL] client: JoinGame completed");
-                    break;
-                }
+                GD.Print("[VR][SL] client: JoinGame returned — checking if landed in load lobby…");
             }
             catch (Exception ex)
             {
                 GD.Print($"[VR][SL] client: attempt {attempt} threw {ex.GetType().Name}: {ex.Message}");
-                if (attempt == 8) { GD.PrintErr("[VR][SL] client: all rejoin attempts failed"); return; }
-                await Task.Delay(1500);
             }
+
+            // Success = NMultiplayerLoadGameScreen present in scene tree.
+            // Give it up to 2s to appear (it's pushed inside JoinGameAsync but
+            // submenu push animation may delay scene-tree visibility).
+            var loadScreen = await WaitForDescendantAsync(loadScreenType, timeoutMs: 2000);
+            if (loadScreen != null)
+            {
+                GD.Print($"[VR][SL] client: landed in load lobby on attempt {attempt}");
+                await ReadyUpInLoadLobbyAsync();
+                return;
+            }
+
+            GD.Print($"[VR][SL] client: attempt {attempt} did not connect (popup shown by game) — backing off");
+            if (attempt < MaxAttempts) await Task.Delay(3500);
         }
 
-        // Once connected and on NMultiplayerLoadGameScreen, ready up.
-        await ReadyUpInLoadLobbyAsync();
+        GD.PrintErr($"[VR][SL] client: all {MaxAttempts} rejoin attempts failed — please reconnect manually via 多人模式 → 加入");
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────
