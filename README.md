@@ -1,4 +1,4 @@
-# StS2 Chat Wheel — 联机协作 Mod
+# StS2 Chat Wheel — 语音轮盘 Mod
 
 > 杀戮尖塔 2多人模式语音轮盘和快速SL
 
