@@ -25,6 +25,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using Godot;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
@@ -90,23 +91,27 @@ public sealed partial class SLCoordinator : Node
         var localId = ns?.NetId ?? 0UL;
         var ts = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        StartLocalProposal(localId, ts, isLocalProposer: true);
-
-        if (ns != null)
+        // Singleplayer fast-path: no peers to coordinate with, no veto window
+        // makes sense. Just execute. We mark _active so subsequent hotkey
+        // presses during the teardown don't queue a second SL.
+        if (ns == null)
         {
-            try
-            {
-                ns.SendMessage(new SLRequestMessage(localId, ts));
-                GD.Print($"[VR][SL] broadcast SLRequest proposer={localId} ts={ts}");
-            }
-            catch (Exception ex)
-            {
-                GD.PrintErr($"[VR][SL] broadcast failed: {ex.Message}");
-            }
+            GD.Print("[VR][SL] singleplayer — executing immediately");
+            _active = new ActiveProposal { ProposerId = 0, Timestamp = ts, DeadlineSec = 0, Vetoed = false };
+            _ui?.HideWithMessage("载入存档点…", 2.0);
+            Execute();
+            return;
         }
-        else
+
+        StartLocalProposal(localId, ts, isLocalProposer: true);
+        try
         {
-            GD.Print("[VR][SL] singleplayer — local-only proposal");
+            ns.SendMessage(new SLRequestMessage(localId, ts));
+            GD.Print($"[VR][SL] broadcast SLRequest proposer={localId} ts={ts}");
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[VR][SL] broadcast failed: {ex.Message}");
         }
     }
 
@@ -134,14 +139,26 @@ public sealed partial class SLCoordinator : Node
         }
     }
 
-    /// <summary>User pressed Y (accept) — just dismisses local prompt; execution waits for timer.</summary>
+    /// <summary>User pressed Confirm — only the proposer can fast-forward. Non-proposers
+    /// just dismiss their local prompt cosmetically; the actual execution still waits
+    /// for the timer so a late veto from anyone is still respected.</summary>
     public void AcceptLocally()
     {
         if (_active == null) return;
-        // Y just hides the prompt — execution still waits for the full vote window
-        // so a late NO from someone else can still cancel.
-        _ui?.Hide();
-        GD.Print("[VR][SL] local accept — prompt dismissed, waiting for vote window");
+        var ns = TryGetNetService();
+        var localId = ns?.NetId ?? 0UL;
+        var iAmProposer = _active.ProposerId == localId || _active.ProposerId == 0UL;
+        if (iAmProposer)
+        {
+            GD.Print("[VR][SL] proposer fast-forwards — executing now (host disconnect propagates to clients)");
+            _ui?.HideWithMessage("载入存档点…", 2.0);
+            Execute();
+        }
+        else
+        {
+            _ui?.Hide();
+            GD.Print("[VR][SL] non-proposer accept — prompt dismissed, waiting for proposer or timer");
+        }
     }
 
     // ── Internal state machine ─────────────────────────────────────────────
@@ -173,53 +190,100 @@ public sealed partial class SLCoordinator : Node
     private void Execute()
     {
         if (_active == null) return;
-        GD.Print("[VR][SL] vote window passed — executing SL");
+        GD.Print("[VR][SL] executing SL");
         _active = null;
-        _ui?.HideWithMessage("载入存档点…", 2.0);
 
-        // Defensive: prevent CleanUp from flushing a save over our pre-combat
-        // autosave. RunManager.ShouldSave has a setter — flip it via reflection
-        // since we can't statically reference the property type without
-        // pulling more game internals.
-        TrySetShouldSaveFalse();
+        // Decide whether to auto-resume from the on-disk save. SP yes, MP no
+        // (V1.0 doesn't auto-rejoin lobby). Captured BEFORE teardown because
+        // RunManager.NetService gets nulled out by CleanUp.
+        var rm = RunManager.Instance;
+        var ns = rm?.NetService;
+        var wasSinglePlayer = ns == null || !ns.IsConnected;
 
-        // Trigger return-to-main-menu. In MP this also tears down NetService
-        // via CleanUp, which propagates a disconnect to all peers that haven't
-        // already started their own teardown.
+        // The on-disk autosave is from when the previous room ended (game's
+        // SaveRun is only called from RunManager.OnEnded). So we don't need
+        // to suppress saving here — the desired save is already on disk and
+        // CleanUp doesn't write a new one. Just tear down + bounce to menu.
+        Task? teardownTask = null;
         try
         {
             var nGameType = Type.GetType("MegaCrit.Sts2.Core.Nodes.NGame, sts2");
-            if (nGameType == null) { GD.PrintErr("[VR][SL] NGame type not loadable"); return; }
-            var instance = nGameType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-            if (instance == null) { GD.PrintErr("[VR][SL] NGame.Instance is null"); return; }
-            var method = nGameType.GetMethod("ReturnToMainMenuAfterRun", BindingFlags.Public | BindingFlags.Instance);
-            if (method == null) { GD.PrintErr("[VR][SL] NGame.ReturnToMainMenuAfterRun not found"); return; }
-            method.Invoke(instance, null);  // returns Task; we don't await
+            var instance = nGameType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var method = nGameType?.GetMethod("ReturnToMainMenuAfterRun", BindingFlags.Public | BindingFlags.Instance);
+            if (instance == null || method == null)
+            {
+                GD.PrintErr("[VR][SL] NGame.ReturnToMainMenuAfterRun not resolvable");
+                return;
+            }
+            teardownTask = method.Invoke(instance, null) as Task;
             GD.Print("[VR][SL] NGame.ReturnToMainMenuAfterRun() invoked");
         }
         catch (Exception ex)
         {
             GD.PrintErr($"[VR][SL] execute failed: {ex.GetType().Name}: {ex.Message}");
+            return;
+        }
+
+        if (wasSinglePlayer)
+        {
+            _ = ChainAutoContinueAsync(teardownTask);
         }
     }
 
-    private static void TrySetShouldSaveFalse()
+    /// <summary>
+    /// After the return-to-main-menu Task completes, the main menu is fully
+    /// constructed in the scene tree. Find NMainMenu and invoke its Continue
+    /// handler — the same handler the user would otherwise click manually.
+    /// </summary>
+    private static async Task ChainAutoContinueAsync(Task? teardownTask)
     {
         try
         {
-            var rmType = Type.GetType("MegaCrit.Sts2.Core.Runs.RunManager, sts2");
-            if (rmType == null) return;
-            var instance = rmType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-            if (instance == null) return;
-            var prop = rmType.GetProperty("ShouldSave", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (prop?.SetMethod == null) { GD.Print("[VR][SL] ShouldSave setter not found — skipping"); return; }
-            prop.SetValue(instance, false);
-            GD.Print("[VR][SL] RunManager.ShouldSave forced to false");
+            if (teardownTask != null) await teardownTask;
+            GD.Print("[VR][SL] return-to-menu Task completed; auto-clicking Continue");
+
+            // Walk scene tree to find NMainMenu instance.
+            var tree = (SceneTree)Engine.GetMainLoop();
+            var nMainMenuType = Type.GetType("MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMainMenu, sts2")
+                ?? throw new InvalidOperationException("NMainMenu type not loadable");
+            Node? menu = null;
+            for (var attempt = 0; attempt < 30 && menu == null; attempt++)
+            {
+                menu = FindDescendantOfType(tree.Root, nMainMenuType);
+                if (menu == null) await Task.Delay(100);  // give scene tree a chance
+            }
+            if (menu == null)
+            {
+                GD.PrintErr("[VR][SL] auto-continue: NMainMenu not found in scene tree after 3s");
+                return;
+            }
+
+            var method = nMainMenuType.GetMethod("OnContinueButtonPressedAsync", BindingFlags.Public | BindingFlags.Instance);
+            if (method == null)
+            {
+                GD.PrintErr("[VR][SL] OnContinueButtonPressedAsync not found");
+                return;
+            }
+            var contTask = method.Invoke(menu, null) as Task;
+            GD.Print("[VR][SL] OnContinueButtonPressedAsync invoked");
+            if (contTask != null) await contTask;
+            GD.Print("[VR][SL] auto-continue completed");
         }
         catch (Exception ex)
         {
-            GD.Print($"[VR][SL] could not flip ShouldSave (non-fatal): {ex.Message}");
+            GD.PrintErr($"[VR][SL] auto-continue failed: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    private static Node? FindDescendantOfType(Node n, Type t)
+    {
+        if (t.IsInstanceOfType(n)) return n;
+        foreach (var c in n.GetChildren())
+        {
+            var hit = FindDescendantOfType(c, t);
+            if (hit != null) return hit;
+        }
+        return null;
     }
 
     private void OnTick()

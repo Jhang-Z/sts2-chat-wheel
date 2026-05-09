@@ -1,3 +1,4 @@
+using System;
 using Godot;
 
 namespace VoiceRoulette.UI;
@@ -18,10 +19,15 @@ public sealed partial class SLPromptOverlay : CanvasLayer
     private Label? _title;
     private Label? _hint;
     private Label? _countdown;
+    private Button? _confirmBtn;
+    private Button? _vetoBtn;
 
     private double _deadlineSec;
     private bool _counting;
     private SceneTree? _tree;
+
+    public Action? OnConfirmClicked;
+    public Action? OnVetoClicked;
 
     public void Start()
     {
@@ -46,7 +52,9 @@ public sealed partial class SLPromptOverlay : CanvasLayer
             AnchorLeft = 0.5f, AnchorTop = 0.5f, AnchorRight = 0.5f, AnchorBottom = 0.5f,
             GrowHorizontal = Control.GrowDirection.Both,
             GrowVertical   = Control.GrowDirection.Both,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
+            // Buttons need Stop so clicks register on them; the panel
+            // background can pass through (we set per-control as needed).
+            MouseFilter = Control.MouseFilterEnum.Stop,
         };
         var sb = StsTheme.Panel(StsTheme.RadiusLarge, StsTheme.BorderHi);
         // Slightly larger content padding for breathing room.
@@ -87,6 +95,46 @@ public sealed partial class SLPromptOverlay : CanvasLayer
         _countdown.AddThemeColorOverride("font_color", StsTheme.Gold);
         _countdown.AddThemeFontSizeOverride("font_size", StsTheme.FontH2);
         v.AddChild(_countdown);
+
+        v.AddChild(new HSeparator { CustomMinimumSize = new Vector2(0, 8) });
+
+        // Button row — clickable affordances. Keyboard (Enter / Esc) still
+        // works in parallel via SLInput.
+        var btnRow = new HBoxContainer
+        {
+            Alignment = BoxContainer.AlignmentMode.Center,
+        };
+        v.AddChild(btnRow);
+
+        _confirmBtn = new Button
+        {
+            Text = "立即执行 SL",
+            CustomMinimumSize = new Vector2(180, 44),
+            MouseFilter = Control.MouseFilterEnum.Stop,
+        };
+        _confirmBtn.AddThemeStyleboxOverride("normal", StsTheme.Button(StsTheme.BtnPrimaryBg, StsTheme.BtnPrimaryHover));
+        _confirmBtn.AddThemeStyleboxOverride("hover",  StsTheme.Button(StsTheme.BtnPrimaryHover, StsTheme.Gold));
+        _confirmBtn.AddThemeStyleboxOverride("pressed",StsTheme.Button(StsTheme.BtnPrimaryHover, StsTheme.Gold));
+        _confirmBtn.AddThemeColorOverride("font_color", StsTheme.Cream);
+        _confirmBtn.AddThemeFontSizeOverride("font_size", StsTheme.FontBody);
+        _confirmBtn.Pressed += () => OnConfirmClicked?.Invoke();
+        btnRow.AddChild(_confirmBtn);
+
+        btnRow.AddChild(new Control { CustomMinimumSize = new Vector2(20, 0) });
+
+        _vetoBtn = new Button
+        {
+            Text = "取消 / 反对",
+            CustomMinimumSize = new Vector2(160, 44),
+            MouseFilter = Control.MouseFilterEnum.Stop,
+        };
+        _vetoBtn.AddThemeStyleboxOverride("normal", StsTheme.Button(StsTheme.BtnBg, StsTheme.PanelBorder));
+        _vetoBtn.AddThemeStyleboxOverride("hover",  StsTheme.Button(StsTheme.BtnBgHover, StsTheme.Gold));
+        _vetoBtn.AddThemeStyleboxOverride("pressed",StsTheme.Button(StsTheme.BtnBgHover, StsTheme.Gold));
+        _vetoBtn.AddThemeColorOverride("font_color", StsTheme.MenuText);
+        _vetoBtn.AddThemeFontSizeOverride("font_size", StsTheme.FontBody);
+        _vetoBtn.Pressed += () => OnVetoClicked?.Invoke();
+        btnRow.AddChild(_vetoBtn);
     }
 
     /// <summary>

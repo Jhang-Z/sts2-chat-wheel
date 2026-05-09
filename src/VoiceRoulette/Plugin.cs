@@ -185,6 +185,8 @@ public static class Plugin
                     threat.Start(sendPing);
                     marker.Start();
                     slPrompt.Start();
+                    slPrompt.OnConfirmClicked = () => slCoordinator.AcceptLocally();
+                    slPrompt.OnVetoClicked    = () => slCoordinator.VetoLocally();
                     slCoordinator.AttachUi(slPrompt);
                     slCoordinator.Start();
                     var slKey = ParseKey(config.Schema.SLHotkey, Key.R);
