@@ -256,7 +256,8 @@ public sealed partial class SLCoordinator : Node
                 return;
             }
 
-            var method = nMainMenuType.GetMethod("OnContinueButtonPressedAsync", BindingFlags.Public | BindingFlags.Instance);
+            var method = nMainMenuType.GetMethod("OnContinueButtonPressedAsync",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (method == null)
             {
                 GD.PrintErr("[VR][SL] OnContinueButtonPressedAsync not found");
