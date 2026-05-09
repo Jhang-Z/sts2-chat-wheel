@@ -139,10 +139,10 @@ C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\mods\
 
 ### 4.3 快速 SL（存档读档）
 
-战斗打崩了想重来？按 **`Cmd Shift R`（Mac）/ `Ctrl Shift R`（Win）**：
+按 **`Cmd Shift R`（Mac）/ `Ctrl Shift R`（Win）**：
 
 - **单人**：立刻断开 → 自动重连 → 直接回到这场战斗之前的房间。
-- **多人**：弹出投票框，所有玩家点「立即执行 SL」全票通过 → 全员同时退出 → 房主自动重开 lobby → 队友自动重连 → 自动 ready → 游戏自动继续。任何人点「取消」全员作废。
+- **多人**：弹出投票框，所有玩家点「立即执行 SL」全票通过 → 全员同时退出 → 房主自动重开 lobby → 队友自动重连 → 自动 ready → 游戏自动继续。任何人点「取消」取消SL。
 
 > SL 的回滚点是**当前房间开始之前**（游戏自带的房间结束 autosave）。回合内 SL 不支持。
 >
