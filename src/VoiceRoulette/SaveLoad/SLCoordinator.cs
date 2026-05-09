@@ -91,10 +91,9 @@ public sealed partial class SLCoordinator : Node
         var localId = ns?.NetId ?? 0UL;
         var ts = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        // Singleplayer fast-path: no peers to coordinate with, no veto window
-        // makes sense. Just execute. We mark _active so subsequent hotkey
-        // presses during the teardown don't queue a second SL.
-        if (ns == null)
+        // Singleplayer fast-path. Note: SP runs use NetSingleplayerGameService
+        // (NOT null NetService), so we have to ask RunManager directly.
+        if (IsEffectivelySinglePlayer())
         {
             GD.Print("[VR][SL] singleplayer — executing immediately");
             _active = new ActiveProposal { ProposerId = 0, Timestamp = ts, DeadlineSec = 0, Vetoed = false };
@@ -104,6 +103,7 @@ public sealed partial class SLCoordinator : Node
         }
 
         StartLocalProposal(localId, ts, isLocalProposer: true);
+        if (ns == null) return;  // shouldn't happen — we already returned above for SP
         try
         {
             ns.SendMessage(new SLRequestMessage(localId, ts));
@@ -195,10 +195,8 @@ public sealed partial class SLCoordinator : Node
 
         // Decide whether to auto-resume from the on-disk save. SP yes, MP no
         // (V1.0 doesn't auto-rejoin lobby). Captured BEFORE teardown because
-        // RunManager.NetService gets nulled out by CleanUp.
-        var rm = RunManager.Instance;
-        var ns = rm?.NetService;
-        var wasSinglePlayer = ns == null || !ns.IsConnected;
+        // RunManager state gets reset by CleanUp.
+        var wasSinglePlayer = IsEffectivelySinglePlayer();
 
         // The on-disk autosave is from when the previous room ended (game's
         // SaveRun is only called from RunManager.OnEnded). So we don't need
@@ -300,6 +298,37 @@ public sealed partial class SLCoordinator : Node
     {
         var ns = RunManager.Instance?.NetService;
         return ns is { IsConnected: true } ? ns : null;
+    }
+
+    /// <summary>
+    /// True for solo runs and any "fake multiplayer" mode (e.g. local-only
+    /// debug). Critical: SP uses a NetSingleplayerGameService that IS connected,
+    /// so a NetService null/disconnected check would lump SP in with co-op.
+    /// </summary>
+    private static bool IsEffectivelySinglePlayer()
+    {
+        var rm = RunManager.Instance;
+        if (rm == null) return true;
+        try
+        {
+            var prop = rm.GetType().GetProperty("IsSinglePlayerOrFakeMultiplayer", BindingFlags.Public | BindingFlags.Instance);
+            if (prop != null)
+            {
+                var val = prop.GetValue(rm);
+                if (val is bool b) return b;
+            }
+        }
+        catch (Exception ex) { GD.Print($"[VR][SL] IsSinglePlayerOrFakeMultiplayer probe failed: {ex.Message}"); }
+        // Fallback heuristic: NetService.Type == Singleplayer (NetGameType enum)
+        var ns = rm.NetService;
+        if (ns == null) return true;
+        try
+        {
+            var typeProp = ns.GetType().GetProperty("Type");
+            var t = typeProp?.GetValue(ns);
+            return t?.ToString() == "Singleplayer";
+        }
+        catch { return false; }
     }
 
     private void TryAttachToNetService()
