@@ -229,13 +229,14 @@ public sealed partial class StatusPinger : Node
                 // for a deeper game-internal namespace just for this.
                 var typeName = ctrl.GetType().Name;
                 if (typeName == "NTopBarGold" && ctrl.GetGlobalRect().HasPoint(mousePos)) goldHit = ctrl;
-                else if (typeName == "NHealthBar" && ctrl.GetGlobalRect().HasPoint(mousePos))
+                else if (typeName == "NHealthBar")
                 {
-                    // Only fire on the LOCAL player's HP bar — NHealthBar
-                    // exists for every creature (enemies + teammates), and we
-                    // don't want to broadcast a teammate's HP as if it were
-                    // ours. Match by creature reference.
-                    if (IsLocalPlayerHealthBar(ctrl)) hpHit = ctrl;
+                    // NHealthBar's root rect is often anchor-stretched to a
+                    // zero / tiny rect — use its public HpBarContainer
+                    // (the visible bar's actual container) for hit detection.
+                    var visual = TryGetHpBarVisualRect(ctrl);
+                    if (visual.HasValue && visual.Value.HasPoint(mousePos) && IsLocalPlayerHealthBar(ctrl))
+                        hpHit = ctrl;
                 }
                 else if (typeName == "NEnergyCounter" && ctrl.GetGlobalRect().HasPoint(mousePos)) energyHit = ctrl;
                 else if (typeName == "NTopBarDeckButton" && ctrl.GetGlobalRect().HasPoint(mousePos)) deckHit = ctrl;
@@ -284,6 +285,17 @@ public sealed partial class StatusPinger : Node
         }
         catch (Exception ex) { GD.Print($"[VR][Pinger] hp read fail: {ex.Message}"); }
         return false;
+    }
+
+    private static Rect2? TryGetHpBarVisualRect(Control hb)
+    {
+        try
+        {
+            var prop = hb.GetType().GetProperty("HpBarContainer");
+            if (prop?.GetValue(hb) is Control c) return c.GetGlobalRect();
+        }
+        catch { }
+        return null;
     }
 
     private static bool IsLocalPlayerHealthBar(Control hb)

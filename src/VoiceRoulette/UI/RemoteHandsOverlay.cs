@@ -26,9 +26,9 @@ namespace VoiceRoulette.UI;
 public sealed partial class RemoteHandsOverlay : CanvasLayer
 {
     private const int LayerIndex = 90;
-    private const float CardWidth = 56f;
-    private const float CardHeight = 78f;
-    private const float CardSpacing = 3f;
+    private const float CardWidth = 44f;
+    private const float CardHeight = 62f;
+    private const float CardSpacing = 2f;
     private const float StripGapFromPortrait = 6f;
     private const double RefreshIntervalSec = 0.25;
 
@@ -103,7 +103,15 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
         {
             var hb = widget.GetType().GetField("_healthBar",
                 BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(widget) as Control;
-            if (hb != null && GodotObject.IsInstanceValid(hb)) return hb.GetGlobalRect();
+            if (hb == null || !GodotObject.IsInstanceValid(hb)) return null;
+
+            // Prefer NHealthBar.HpBarContainer (the actual visible bar) — the
+            // NHealthBar root is often anchor-stretched to a wider rect than
+            // what the user sees, leaving cards positioned far too right.
+            var prop = hb.GetType().GetProperty("HpBarContainer");
+            if (prop?.GetValue(hb) is Control c && GodotObject.IsInstanceValid(c))
+                return c.GetGlobalRect();
+            return hb.GetGlobalRect();
         }
         catch { }
         return null;
@@ -288,8 +296,8 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
 // styled by card type.
 internal sealed partial class RemoteCardView : PanelContainer
 {
-    private const float CardW = 56f;
-    private const float CardH = 78f;
+    private const float CardW = 44f;
+    private const float CardH = 62f;
 
     private TextureRect? _portrait;
     private Label? _title;
@@ -329,7 +337,7 @@ internal sealed partial class RemoteCardView : PanelContainer
         AddChild(v);
 
         // ── Header: cost orb (left) + title (right) ─────────────────────
-        var header = new Control { CustomMinimumSize = new Vector2(0, 16) };
+        var header = new Control { CustomMinimumSize = new Vector2(0, 14) };
         v.AddChild(header);
 
         _cost = new Label
@@ -337,13 +345,13 @@ internal sealed partial class RemoteCardView : PanelContainer
             Text = "?",
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(16, 16),
+            CustomMinimumSize = new Vector2(14, 14),
             Position = new Vector2(1, 0),
         };
         _cost.AddThemeColorOverride("font_color", new Color("FFFFFF"));
         _cost.AddThemeColorOverride("font_outline_color", new Color("000000"));
         _cost.AddThemeConstantOverride("outline_size", 3);
-        _cost.AddThemeFontSizeOverride("font_size", 11);
+        _cost.AddThemeFontSizeOverride("font_size", 9);
         header.AddChild(_cost);
 
         _title = new Label
@@ -351,17 +359,17 @@ internal sealed partial class RemoteCardView : PanelContainer
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             ClipText = true,
-            Position = new Vector2(17, 0),
-            Size = new Vector2(CardW - 18, 16),
+            Position = new Vector2(15, 0),
+            Size = new Vector2(CardW - 16, 14),
         };
         _title.AddThemeColorOverride("font_color", StsTheme.Cream);
-        _title.AddThemeFontSizeOverride("font_size", 9);
+        _title.AddThemeFontSizeOverride("font_size", 8);
         header.AddChild(_title);
 
         // ── Portrait ────────────────────────────────────────────────────
         _portrait = new TextureRect
         {
-            CustomMinimumSize = new Vector2(CardW - 4, 44),
+            CustomMinimumSize = new Vector2(CardW - 4, 36),
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
         };
@@ -376,10 +384,10 @@ internal sealed partial class RemoteCardView : PanelContainer
         {
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(0, 14),
+            CustomMinimumSize = new Vector2(0, 12),
         };
         _typeLabel.AddThemeColorOverride("font_color", StsTheme.Cream);
-        _typeLabel.AddThemeFontSizeOverride("font_size", 9);
+        _typeLabel.AddThemeFontSizeOverride("font_size", 8);
         v.AddChild(_typeLabel);
     }
 
