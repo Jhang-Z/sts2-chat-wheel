@@ -366,12 +366,15 @@ internal sealed partial class RemoteCardView : Control
             var nc = packed.Instantiate<NCard>();
             if (nc == null) return;
 
+            GD.Print($"[VR][DBG] card.Title='{card.Title}' card.Type={card.Type} hasModel={(nc.Model!=null)} pre-add parent={nc.GetParent()?.Name ?? "null"}");
             _viewport.AddChild(nc);   // _Ready fires here (fresh instance)
+            GD.Print($"[VR][DBG] post-AddChild parent={nc.GetParent()?.Name ?? "null"} insideTree={nc.IsInsideTree()} ready={nc.IsNodeReady()}");
 
             // Now go through the full bind sequence in the same order
             // NCardHolder.ReassignToCard uses.
             nc.Visibility = ModelVisibility.Visible;
             nc.Model = card;
+            GD.Print($"[VR][DBG] post-set Model: nc.Model.Title='{nc.Model?.Title ?? "null"}' visibility={nc.Visibility}");
             try
             {
                 var owner = card.GetType().GetProperty("Owner")?.GetValue(card);
@@ -384,11 +387,20 @@ internal sealed partial class RemoteCardView : Control
             {
                 nc.UpdateVisuals(MegaCrit.Sts2.Core.Entities.Cards.PileType.Hand,
                                  MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode.Normal);
+                // Read back the actual rendered text via reflection
+                var f = typeof(NCard).GetField("_titleLabel", BindingFlags.NonPublic | BindingFlags.Instance);
+                var titleLabel = f?.GetValue(nc) as Godot.Label;
+                var descField = typeof(NCard).GetField("_descriptionLabel", BindingFlags.NonPublic | BindingFlags.Instance);
+                var descLabel = descField?.GetValue(nc);
+                var descTextProp = descLabel?.GetType().GetProperty("Text");
+                var descText = descTextProp?.GetValue(descLabel) as string;
+                GD.Print($"[VR][DBG] post-UpdateVisuals: titleLabel.Text='{titleLabel?.Text ?? "null"}' descText='{(descText?.Length>30?descText[..30]+"...":descText)}'");
+                GD.Print($"[VR][DBG]   nc.GlobalPosition={nc.GlobalPosition} parent.GlobalPosition={(nc.GetParent() as Control)?.GlobalPosition}");
             }
             catch (Exception ex) { GD.Print($"[VR][RemoteHands] UpdateVisuals: {ex.Message}"); }
 
             _card = nc;
         }
-        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] card instantiation fail: {ex.Message}"); }
+        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] card instantiation fail: {ex.Message}\n{ex.StackTrace}"); }
     }
 }
