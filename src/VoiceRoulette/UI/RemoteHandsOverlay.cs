@@ -200,11 +200,18 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
         {
             try
             {
-                var nc = NCard.Create(card, ModelVisibility.Visible);
+                // Render an isolated CLONE of the CardModel — NCard appears to
+                // bind one-to-one with its CardModel for description rendering,
+                // so showing the same canonical instance twice (e.g. 3× Strike)
+                // results in only the first NCard rendering correctly; the
+                // others fall back to "If you can read this, there is a bug."
+                // Deep-cloning via the game's own ToSerializable/FromSerializable
+                // round-trip gives each NCard its own independent model.
+                var renderModel = TryDeepCloneCardModel(card) ?? card;
+
+                var nc = NCard.Create(renderModel, ModelVisibility.Visible);
                 if (nc == null) continue;
                 nc.Scale = new Vector2(CardScale, CardScale);
-                // Wrap in a fixed-size container so layout reserves the
-                // scaled-down footprint instead of the natural size.
                 var wrap = new Control
                 {
                     CustomMinimumSize = new Vector2(180 * CardScale, 270 * CardScale),
@@ -218,6 +225,37 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
                 GD.PrintErr($"[VR][RemoteHands] NCard.Create failed: {ex.Message}");
             }
         }
+    }
+
+    private static CardModel? TryDeepCloneCardModel(CardModel src)
+    {
+        try
+        {
+            var t = src.GetType();
+            // Prefer ToSerializable + FromSerializable for the strongest
+            // independence — same path the game uses to load cards from save.
+            var toSer = t.GetMethod("ToSerializable", BindingFlags.Public | BindingFlags.Instance);
+            var ser = toSer?.Invoke(src, null);
+            if (ser != null)
+            {
+                var fromSer = t.GetMethod("FromSerializable", BindingFlags.Public | BindingFlags.Static);
+                var copy = fromSer?.Invoke(null, new[] { ser });
+                if (copy is CardModel cm) return cm;
+            }
+        }
+        catch (Exception ex) { GD.Print($"[VR][RemoteHands] deep clone (ser) failed: {ex.Message}"); }
+
+        try
+        {
+            // Fallback: CreateClone — runs the in-game clone path, which
+            // sets CloneOf and can fail outside an active run, but is worth
+            // a try.
+            var createClone = src.GetType().GetMethod("CreateClone", BindingFlags.Public | BindingFlags.Instance);
+            if (createClone?.Invoke(src, null) is CardModel cm) return cm;
+        }
+        catch (Exception ex) { GD.Print($"[VR][RemoteHands] CreateClone failed: {ex.Message}"); }
+
+        return null;
     }
 
     // ── helpers ───────────────────────────────────────────────────────────
