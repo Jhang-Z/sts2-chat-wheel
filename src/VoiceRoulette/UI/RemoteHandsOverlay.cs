@@ -91,9 +91,8 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
         {
             if (st.PortraitNode == null || !GodotObject.IsInstanceValid(st.PortraitNode))
                 continue;
-            // Anchor to the HP bar inside the player widget, not the widget
-            // itself — the widget extends well past the visible HP bar with
-            // empty right padding, leaving an unwanted gap.
+            // Anchor to the HP bar inside the player widget — the widget's
+            // own right edge has empty padding that leaves a gap.
             var anchorRect = TryGetHealthBarRect(st.PortraitNode) ?? st.PortraitNode.GetGlobalRect();
             var x = anchorRect.Position.X + anchorRect.Size.X + StripGapFromPortrait;
             var y = anchorRect.Position.Y + anchorRect.Size.Y * 0.5f - CardHeight * 0.5f;
@@ -148,9 +147,7 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
                 nid = v;
             }
             catch { continue; }
-            // Note: local player INTENTIONALLY included for visual testing.
-            // Toggle this back to skip-self when satisfied with layout:
-            //   if (localId is ulong me && nid == me) continue;
+            if (localId is ulong me && nid == me) continue;
             seenNetIds.Add(nid);
 
             var pcs = ReadObj(player, "PlayerCombatState");
@@ -197,7 +194,8 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
 
         portraitByNetId.TryGetValue(netId, out var portrait);
         st.PortraitNode = portrait;
-        // Hide the strip until we have a portrait to anchor against.
+        // Hide the strip until we have a portrait to anchor against (only
+        // multiplayer mode has NMultiplayerPlayerState widgets).
         st.Container.Visible = portrait != null;
 
         var fingerprint = FingerprintHand(cards);
@@ -213,8 +211,13 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
             try
             {
                 var view = new RemoteCardView();
-                view.SetCard(card);
+                // CRITICAL: add to scene tree FIRST, then SetCard. Until view
+                // is in the tree, its child SubViewport isn't either, so any
+                // NCard we add inside fails its IsNodeReady checks (_titleLabel
+                // stays null, UpdateVisuals early-returns, descriptions stay
+                // at the .tscn defaults — "Broken Card", "If you can read this").
                 st.CardRow.AddChild(view);
+                view.SetCard(card);
                 st.Views.Add(view);
             }
             catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] card view fail: {ex.Message}"); }
@@ -295,68 +298,34 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
     }
 }
 
-// Card view that uses the game's own NCard scene rendered into a SubViewport,
-// then displayed in a TextureRect at our desired smaller size. This achieves
-// faithful card rendering (cost / art / name / type / description with
-// keyword highlights) at any scale — Control.Scale on NCard directly
-// doesn't work because NCard's anchor-stretched children ignore it.
+// Card view: instantiates the game's card.tscn fresh, applies Control.Scale
+// to shrink visually, and uses the wrapper's CustomMinimumSize to claim a
+// small layout footprint regardless of NCard's native ~180×270 size.
 internal sealed partial class RemoteCardView : Control
 {
-    public const float FootprintW = 84f;
-    public const float FootprintH = 126f;
+    public const float ScaleFactor = 0.31f;
     public const int   NativeW = 180;
     public const int   NativeH = 270;
+    public const float FootprintW = NativeW * ScaleFactor;   // ~56
+    public const float FootprintH = NativeH * ScaleFactor;   // ~84
 
-    private SubViewport? _viewport;
-    private TextureRect? _display;
     private NCard? _card;
 
     public RemoteCardView()
     {
         CustomMinimumSize = new Vector2(FootprintW, FootprintH);
         MouseFilter = MouseFilterEnum.Ignore;
-        ClipContents = false;
-        Build();
-    }
-
-    private void Build()
-    {
-        // Off-screen viewport — renders NCard at native resolution.
-        _viewport = new SubViewport
-        {
-            Size = new Vector2I(NativeW, NativeH),
-            TransparentBg = true,
-            RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
-            HandleInputLocally = false,
-        };
-        AddChild(_viewport);
-
-        // Display the viewport's render at our footprint size — automatic
-        // scaling. ViewportTexture stays live; updates as NCard repaints.
-        _display = new TextureRect
-        {
-            Texture = _viewport.GetTexture(),
-            CustomMinimumSize = new Vector2(FootprintW, FootprintH),
-            Size = new Vector2(FootprintW, FootprintH),
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.Scale,
-            MouseFilter = MouseFilterEnum.Ignore,
-        };
-        AddChild(_display);
+        // Clip in case NCard's children overflow our scaled bounds.
+        ClipContents = true;
     }
 
     public void SetCard(CardModel card)
     {
         if (_card != null && GodotObject.IsInstanceValid(_card)) _card.QueueFree();
         _card = null;
-        if (_viewport == null) return;
 
         try
         {
-            // Bypass NodePool: instantiate card.tscn fresh. Each NCard is
-            // a clean instance whose _Ready fires the moment we add it to
-            // our SubViewport. This avoids the pool's stale parent / stale
-            // model state issues entirely.
             var packed = ResourceLoader.Load<PackedScene>("res://scenes/cards/card.tscn");
             if (packed == null)
             {
@@ -366,15 +335,20 @@ internal sealed partial class RemoteCardView : Control
             var nc = packed.Instantiate<NCard>();
             if (nc == null) return;
 
-            GD.Print($"[VR][DBG] card.Title='{card.Title}' card.Type={card.Type} hasModel={(nc.Model!=null)} pre-add parent={nc.GetParent()?.Name ?? "null"}");
-            _viewport.AddChild(nc);   // _Ready fires here (fresh instance)
-            GD.Print($"[VR][DBG] post-AddChild parent={nc.GetParent()?.Name ?? "null"} insideTree={nc.IsInsideTree()} ready={nc.IsNodeReady()}");
+            // Add to tree FIRST — _Ready must run so child node refs
+            // (_titleLabel etc.) are populated before we set Model and call
+            // UpdateVisuals; otherwise both early-return on IsNodeReady=false.
+            AddChild(nc);
 
-            // Now go through the full bind sequence in the same order
-            // NCardHolder.ReassignToCard uses.
+            // Apply transform-level scale (HBoxContainer ignores transform
+            // when computing layout, so we override layout footprint via
+            // the wrapper's CustomMinimumSize above).
+            nc.PivotOffset = Vector2.Zero;
+            nc.Scale = new Vector2(ScaleFactor, ScaleFactor);
+
+            // Bind in the same order NCardHolder.ReassignToCard uses.
             nc.Visibility = ModelVisibility.Visible;
             nc.Model = card;
-            GD.Print($"[VR][DBG] post-set Model: nc.Model.Title='{nc.Model?.Title ?? "null"}' visibility={nc.Visibility}");
             try
             {
                 var owner = card.GetType().GetProperty("Owner")?.GetValue(card);
@@ -387,20 +361,11 @@ internal sealed partial class RemoteCardView : Control
             {
                 nc.UpdateVisuals(MegaCrit.Sts2.Core.Entities.Cards.PileType.Hand,
                                  MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode.Normal);
-                // Read back the actual rendered text via reflection
-                var f = typeof(NCard).GetField("_titleLabel", BindingFlags.NonPublic | BindingFlags.Instance);
-                var titleLabel = f?.GetValue(nc) as Godot.Label;
-                var descField = typeof(NCard).GetField("_descriptionLabel", BindingFlags.NonPublic | BindingFlags.Instance);
-                var descLabel = descField?.GetValue(nc);
-                var descTextProp = descLabel?.GetType().GetProperty("Text");
-                var descText = descTextProp?.GetValue(descLabel) as string;
-                GD.Print($"[VR][DBG] post-UpdateVisuals: titleLabel.Text='{titleLabel?.Text ?? "null"}' descText='{(descText?.Length>30?descText[..30]+"...":descText)}'");
-                GD.Print($"[VR][DBG]   nc.GlobalPosition={nc.GlobalPosition} parent.GlobalPosition={(nc.GetParent() as Control)?.GlobalPosition}");
             }
             catch (Exception ex) { GD.Print($"[VR][RemoteHands] UpdateVisuals: {ex.Message}"); }
 
             _card = nc;
         }
-        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] card instantiation fail: {ex.Message}\n{ex.StackTrace}"); }
+        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] card instantiation fail: {ex.Message}"); }
     }
 }
