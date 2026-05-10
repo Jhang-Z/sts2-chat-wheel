@@ -26,9 +26,9 @@ namespace VoiceRoulette.UI;
 public sealed partial class RemoteHandsOverlay : CanvasLayer
 {
     private const int LayerIndex = 90;
-    private const float CardWidth = 78f;
-    private const float CardHeight = 110f;
-    private const float CardSpacing = 4f;
+    private const float CardWidth = 56f;
+    private const float CardHeight = 78f;
+    private const float CardSpacing = 3f;
     private const float StripGapFromPortrait = 12f;
     private const double RefreshIntervalSec = 0.25;
 
@@ -272,8 +272,8 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
 // styled by card type.
 internal sealed partial class RemoteCardView : PanelContainer
 {
-    private const float CardW = 78f;
-    private const float CardH = 110f;
+    private const float CardW = 56f;
+    private const float CardH = 78f;
 
     private TextureRect? _portrait;
     private Label? _title;
@@ -313,7 +313,7 @@ internal sealed partial class RemoteCardView : PanelContainer
         AddChild(v);
 
         // ── Header: cost orb (left) + title (right) ─────────────────────
-        var header = new Control { CustomMinimumSize = new Vector2(0, 22) };
+        var header = new Control { CustomMinimumSize = new Vector2(0, 16) };
         v.AddChild(header);
 
         _cost = new Label
@@ -321,13 +321,13 @@ internal sealed partial class RemoteCardView : PanelContainer
             Text = "?",
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(22, 22),
-            Position = new Vector2(2, 0),
+            CustomMinimumSize = new Vector2(16, 16),
+            Position = new Vector2(1, 0),
         };
         _cost.AddThemeColorOverride("font_color", new Color("FFFFFF"));
         _cost.AddThemeColorOverride("font_outline_color", new Color("000000"));
-        _cost.AddThemeConstantOverride("outline_size", 4);
-        _cost.AddThemeFontSizeOverride("font_size", 14);
+        _cost.AddThemeConstantOverride("outline_size", 3);
+        _cost.AddThemeFontSizeOverride("font_size", 11);
         header.AddChild(_cost);
 
         _title = new Label
@@ -335,23 +335,23 @@ internal sealed partial class RemoteCardView : PanelContainer
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             ClipText = true,
-            Position = new Vector2(24, 0),
-            Size = new Vector2(CardW - 26, 22),
+            Position = new Vector2(17, 0),
+            Size = new Vector2(CardW - 18, 16),
         };
         _title.AddThemeColorOverride("font_color", StsTheme.Cream);
-        _title.AddThemeFontSizeOverride("font_size", 11);
+        _title.AddThemeFontSizeOverride("font_size", 9);
         header.AddChild(_title);
 
         // ── Portrait ────────────────────────────────────────────────────
         _portrait = new TextureRect
         {
-            CustomMinimumSize = new Vector2(CardW - 6, 60),
+            CustomMinimumSize = new Vector2(CardW - 4, 44),
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
         };
         var portraitWrap = new MarginContainer();
-        portraitWrap.AddThemeConstantOverride("margin_left", 3);
-        portraitWrap.AddThemeConstantOverride("margin_right", 3);
+        portraitWrap.AddThemeConstantOverride("margin_left", 2);
+        portraitWrap.AddThemeConstantOverride("margin_right", 2);
         portraitWrap.AddChild(_portrait);
         v.AddChild(portraitWrap);
 
@@ -360,10 +360,10 @@ internal sealed partial class RemoteCardView : PanelContainer
         {
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(0, 18),
+            CustomMinimumSize = new Vector2(0, 14),
         };
         _typeLabel.AddThemeColorOverride("font_color", StsTheme.Cream);
-        _typeLabel.AddThemeFontSizeOverride("font_size", 11);
+        _typeLabel.AddThemeFontSizeOverride("font_size", 9);
         v.AddChild(_typeLabel);
     }
 
