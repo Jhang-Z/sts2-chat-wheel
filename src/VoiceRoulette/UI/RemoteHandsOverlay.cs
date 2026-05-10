@@ -298,31 +298,56 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
     }
 }
 
-// Card view: instantiates the game's card.tscn fresh, applies Control.Scale
-// to shrink visually, and uses the wrapper's CustomMinimumSize to claim a
-// small layout footprint regardless of NCard's native ~180×270 size.
+// Card view: NCard renders inside an off-screen SubViewport at native
+// 180×270, then a TextureRect displays the viewport's live texture at
+// our footprint size. Real visual scaling at any ratio.
 internal sealed partial class RemoteCardView : Control
 {
-    public const float ScaleFactor = 0.31f;
     public const int   NativeW = 180;
     public const int   NativeH = 270;
-    public const float FootprintW = NativeW * ScaleFactor;   // ~56
-    public const float FootprintH = NativeH * ScaleFactor;   // ~84
+    public const float FootprintW = 56f;
+    public const float FootprintH = 84f;
 
+    private SubViewport? _viewport;
+    private TextureRect? _display;
     private NCard? _card;
 
     public RemoteCardView()
     {
         CustomMinimumSize = new Vector2(FootprintW, FootprintH);
         MouseFilter = MouseFilterEnum.Ignore;
-        // Clip in case NCard's children overflow our scaled bounds.
-        ClipContents = true;
+        ClipContents = false;
+        Build();
+    }
+
+    private void Build()
+    {
+        _viewport = new SubViewport
+        {
+            Size = new Vector2I(NativeW, NativeH),
+            TransparentBg = true,
+            RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+            HandleInputLocally = false,
+        };
+        AddChild(_viewport);
+
+        _display = new TextureRect
+        {
+            Texture = _viewport.GetTexture(),
+            CustomMinimumSize = new Vector2(FootprintW, FootprintH),
+            Size = new Vector2(FootprintW, FootprintH),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.Scale,
+            MouseFilter = MouseFilterEnum.Ignore,
+        };
+        AddChild(_display);
     }
 
     public void SetCard(CardModel card)
     {
         if (_card != null && GodotObject.IsInstanceValid(_card)) _card.QueueFree();
         _card = null;
+        if (_viewport == null) return;
 
         try
         {
@@ -335,18 +360,12 @@ internal sealed partial class RemoteCardView : Control
             var nc = packed.Instantiate<NCard>();
             if (nc == null) return;
 
-            // Add to tree FIRST — _Ready must run so child node refs
-            // (_titleLabel etc.) are populated before we set Model and call
-            // UpdateVisuals; otherwise both early-return on IsNodeReady=false.
-            AddChild(nc);
+            // Critical ordering — wrapper is already in the scene tree
+            // (RemoteHandsOverlay.UpdateStrip adds it before SetCard runs),
+            // so SubViewport is in tree, so adding NCard fires its _Ready
+            // and populates the field references it needs for rendering.
+            _viewport.AddChild(nc);
 
-            // Apply transform-level scale (HBoxContainer ignores transform
-            // when computing layout, so we override layout footprint via
-            // the wrapper's CustomMinimumSize above).
-            nc.PivotOffset = Vector2.Zero;
-            nc.Scale = new Vector2(ScaleFactor, ScaleFactor);
-
-            // Bind in the same order NCardHolder.ReassignToCard uses.
             nc.Visibility = ModelVisibility.Visible;
             nc.Model = card;
             try
