@@ -154,7 +154,13 @@ public sealed partial class StatusPinger : Node
 
         Walk(root);
 
-        // Priority: enemy > combat-area items > top-bar/UI buttons.
+        // Priority order. Local player HP bar comes BEFORE enemy because
+        // the player and enemy stand close together and an enemy's hitbox
+        // often extends downward over the in-combat HP bar — without this
+        // re-ordering, clicking your own HP bar would frequently fire the
+        // "都打这一只" enemy mark instead.
+        if (hpHit != null && TryReadHp(hpHit, out var cur, out var max, out var blk))
+            return new HitResult { Kind = HitKind.Hp, IntValue = cur, IntValue2 = max, BlockValue = blk };
         if (bestEnemyNode != null)
         {
             var pos = bestEnemyNode.GlobalPosition;
@@ -167,8 +173,6 @@ public sealed partial class StatusPinger : Node
 
         if (goldHit != null && TryReadGold(goldHit, out var gold))
             return new HitResult { Kind = HitKind.Gold, IntValue = gold };
-        if (hpHit != null && TryReadHp(hpHit, out var cur, out var max, out var blk))
-            return new HitResult { Kind = HitKind.Hp, IntValue = cur, IntValue2 = max, BlockValue = blk };
         if (energyHit != null && TryReadEnergy(energyHit, out var ce, out var me))
             return new HitResult { Kind = HitKind.Energy, IntValue = ce, IntValue2 = me };
         if (deckHit != null && TryReadDeckCount(deckHit, out var dc))
