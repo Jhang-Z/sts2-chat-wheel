@@ -18,7 +18,9 @@ using System.Linq;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Entities.Cards;
+using MegaCrit.Sts2.Core.Entities.UI;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 
 namespace VoiceRoulette.UI;
@@ -26,8 +28,10 @@ namespace VoiceRoulette.UI;
 public sealed partial class RemoteHandsOverlay : CanvasLayer
 {
     private const int LayerIndex = 90;
-    private const float CardWidth = 44f;
-    private const float CardHeight = 62f;
+    // Cards are full NCard renders scaled down — the constants here describe
+    // the scaled footprint we reserve in the layout.
+    private const float CardWidth = RemoteCardView.FootprintW;
+    private const float CardHeight = RemoteCardView.FootprintH;
     private const float CardSpacing = 2f;
     private const float StripGapFromPortrait = 6f;
     private const double RefreshIntervalSec = 0.25;
@@ -291,151 +295,49 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
     }
 }
 
-// Custom mini-card panel — extracts data straight from CardModel without
-// NCard's NodePool entanglements. Sized at CardWidth × CardHeight and
-// styled by card type.
-internal sealed partial class RemoteCardView : PanelContainer
+// Card view that uses the game's own NCard scene — gives us the full
+// in-game card visual (cost / art / name / type / description with
+// keyword highlights) at a smaller size. NCard's natural footprint is
+// roughly 180 × 270; we scale down via Control.Scale and reserve the
+// scaled footprint in our layout via CustomMinimumSize.
+internal sealed partial class RemoteCardView : Control
 {
-    private const float CardW = 44f;
-    private const float CardH = 62f;
+    public const float ScaleFactor = 0.40f;
+    public const float NativeW = 180f;
+    public const float NativeH = 270f;
+    public const float FootprintW = NativeW * ScaleFactor;   // ≈72
+    public const float FootprintH = NativeH * ScaleFactor;   // ≈108
 
-    private TextureRect? _portrait;
-    private Label? _title;
-    private Label? _cost;
-    private Label? _typeLabel;
+    private NCard? _card;
 
     public RemoteCardView()
     {
-        CustomMinimumSize = new Vector2(CardW, CardH);
-        MouseFilter = Control.MouseFilterEnum.Ignore;
-        Build();
-    }
-
-    private void Build()
-    {
-        // Outer frame — neutral dark with thin border. Type-specific
-        // tinting goes on the title bar to keep portraits readable.
-        var sb = new StyleBoxFlat
-        {
-            BgColor = new Color("1B1612"),
-            BorderColor = new Color("4D4B40"),
-            BorderWidthLeft = 2, BorderWidthRight = 2,
-            BorderWidthTop = 2, BorderWidthBottom = 2,
-            CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4,
-            CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4,
-            ContentMarginLeft = 0, ContentMarginRight = 0,
-            ContentMarginTop = 0, ContentMarginBottom = 0,
-        };
-        AddThemeStyleboxOverride("panel", sb);
-
-        var v = new VBoxContainer
-        {
-            AnchorLeft = 0, AnchorTop = 0, AnchorRight = 1, AnchorBottom = 1,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        v.AddThemeConstantOverride("separation", 0);
-        AddChild(v);
-
-        // ── Header: cost orb (left) + title (right) ─────────────────────
-        var header = new Control { CustomMinimumSize = new Vector2(0, 14) };
-        v.AddChild(header);
-
-        _cost = new Label
-        {
-            Text = "?",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(14, 14),
-            Position = new Vector2(1, 0),
-        };
-        _cost.AddThemeColorOverride("font_color", new Color("FFFFFF"));
-        _cost.AddThemeColorOverride("font_outline_color", new Color("000000"));
-        _cost.AddThemeConstantOverride("outline_size", 3);
-        _cost.AddThemeFontSizeOverride("font_size", 9);
-        header.AddChild(_cost);
-
-        _title = new Label
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            ClipText = true,
-            Position = new Vector2(15, 0),
-            Size = new Vector2(CardW - 16, 14),
-        };
-        _title.AddThemeColorOverride("font_color", StsTheme.Cream);
-        _title.AddThemeFontSizeOverride("font_size", 8);
-        header.AddChild(_title);
-
-        // ── Portrait ────────────────────────────────────────────────────
-        _portrait = new TextureRect
-        {
-            CustomMinimumSize = new Vector2(CardW - 4, 36),
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
-        };
-        var portraitWrap = new MarginContainer();
-        portraitWrap.AddThemeConstantOverride("margin_left", 2);
-        portraitWrap.AddThemeConstantOverride("margin_right", 2);
-        portraitWrap.AddChild(_portrait);
-        v.AddChild(portraitWrap);
-
-        // ── Type label (color-coded banner) ─────────────────────────────
-        _typeLabel = new Label
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(0, 12),
-        };
-        _typeLabel.AddThemeColorOverride("font_color", StsTheme.Cream);
-        _typeLabel.AddThemeFontSizeOverride("font_size", 8);
-        v.AddChild(_typeLabel);
+        CustomMinimumSize = new Vector2(FootprintW, FootprintH);
+        MouseFilter = MouseFilterEnum.Ignore;
+        ClipContents = false;
     }
 
     public void SetCard(CardModel card)
     {
-        if (_title == null || _cost == null || _portrait == null || _typeLabel == null) return;
+        // Discard any prior NCard before creating a new one — pool reuse is
+        // managed by NodePool internally.
+        if (_card != null && GodotObject.IsInstanceValid(_card)) _card.QueueFree();
+        _card = null;
 
-        _title.Text = card.Title ?? "?";
-
-        // Cost: prefer resolved (current) value, fall back to canonical.
-        int cost = 0;
-        bool costsX = false;
         try
         {
-            var ec = card.EnergyCost;
-            if (ec != null)
-            {
-                cost = ec.GetResolved();
-                costsX = ec.CostsX;
-            }
+            var nc = NCard.Create(card, ModelVisibility.Visible);
+            if (nc == null) return;
+            // Scale around the top-left corner so the visible card fills our
+            // reserved footprint.
+            nc.PivotOffset = Vector2.Zero;
+            nc.Scale = new Vector2(ScaleFactor, ScaleFactor);
+            AddChild(nc);
+            _card = nc;
         }
-        catch { }
-        _cost.Text = costsX ? "X" : cost.ToString();
-
-        // Portrait — Texture2D directly off CardModel.
-        try { _portrait.Texture = card.Portrait; }
-        catch { _portrait.Texture = null; }
-
-        // Type label + colored panel border based on type.
-        var (typeText, typeColor) = card.Type switch
-        {
-            CardType.Attack => ("攻击",  new Color("A4332C")),  // red
-            CardType.Skill  => ("技能",  new Color("4F6FAA")),  // blue
-            CardType.Power  => ("能力",  new Color("4F8E5C")),  // green
-            CardType.Status => ("状态",  new Color("8A7E62")),  // gray
-            CardType.Curse  => ("诅咒",  new Color("550B9E")),  // purple
-            CardType.Quest  => ("任务",  new Color("7E3E15")),  // brown
-            _               => ("",       new Color("4D4B40")),
-        };
-        _typeLabel.Text = typeText;
-
-        // Re-tint the panel border to match card type.
-        var existingSb = GetThemeStylebox("panel");
-        if (existingSb is StyleBoxFlat sbf)
-        {
-            sbf.BorderColor = typeColor;
-            // Top-only thicker border to act as a banner accent.
-            sbf.BorderWidthTop = 3;
-        }
+        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] NCard.Create fail: {ex.Message}"); }
     }
+
+    // Keep the older method name available so callers don't change.
+    public void Build() { /* no-op; layout reserved via CustomMinimumSize */ }
 }
