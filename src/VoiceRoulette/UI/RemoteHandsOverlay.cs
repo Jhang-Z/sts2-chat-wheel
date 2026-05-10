@@ -298,93 +298,137 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
     }
 }
 
-// Card view: NCard renders inside an off-screen SubViewport at native
-// 180×270, then a TextureRect displays the viewport's live texture at
-// our footprint size. Real visual scaling at any ratio.
-internal sealed partial class RemoteCardView : Control
+// Custom mini-card. NCard.Create has too many implicit dependencies on
+// the game's hand-display pipeline (NCardHolder, NHandCardHolder, etc.)
+// to render correctly outside of it, and Godot's SubViewport doesn't
+// reliably isolate rendering when embedded in a Control hierarchy under
+// a CanvasLayer. So we build a faithful-enough mini using the card's
+// own Title/Type/Portrait/EnergyCost — readable at a glance, never
+// shows "Broken Card" placeholders.
+internal sealed partial class RemoteCardView : PanelContainer
 {
-    public const int   NativeW = 180;
-    public const int   NativeH = 270;
     public const float FootprintW = 56f;
-    public const float FootprintH = 84f;
+    public const float FootprintH = 78f;
 
-    private SubViewport? _viewport;
-    private TextureRect? _display;
-    private NCard? _card;
+    private TextureRect? _portrait;
+    private Label? _title;
+    private Label? _cost;
+    private Label? _typeLabel;
 
     public RemoteCardView()
     {
         CustomMinimumSize = new Vector2(FootprintW, FootprintH);
         MouseFilter = MouseFilterEnum.Ignore;
-        ClipContents = false;
         Build();
     }
 
     private void Build()
     {
-        _viewport = new SubViewport
+        var sb = new StyleBoxFlat
         {
-            Size = new Vector2I(NativeW, NativeH),
-            TransparentBg = true,
-            RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
-            HandleInputLocally = false,
+            BgColor = new Color("1B1612"),
+            BorderColor = new Color("4D4B40"),
+            BorderWidthLeft = 1, BorderWidthRight = 1,
+            BorderWidthTop = 1, BorderWidthBottom = 1,
+            CornerRadiusBottomLeft = 3, CornerRadiusBottomRight = 3,
+            CornerRadiusTopLeft = 3, CornerRadiusTopRight = 3,
         };
-        AddChild(_viewport);
+        AddThemeStyleboxOverride("panel", sb);
 
-        _display = new TextureRect
+        var v = new VBoxContainer { MouseFilter = MouseFilterEnum.Ignore };
+        v.AddThemeConstantOverride("separation", 0);
+        AddChild(v);
+
+        // Header: cost orb + title
+        var header = new Control { CustomMinimumSize = new Vector2(0, 13) };
+        v.AddChild(header);
+
+        _cost = new Label
         {
-            Texture = _viewport.GetTexture(),
-            CustomMinimumSize = new Vector2(FootprintW, FootprintH),
-            Size = new Vector2(FootprintW, FootprintH),
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.Scale,
-            MouseFilter = MouseFilterEnum.Ignore,
+            Text = "?",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(13, 13),
+            Position = new Vector2(1, 0),
         };
-        AddChild(_display);
+        _cost.AddThemeColorOverride("font_color", new Color("FFFFFF"));
+        _cost.AddThemeColorOverride("font_outline_color", new Color("000000"));
+        _cost.AddThemeConstantOverride("outline_size", 3);
+        _cost.AddThemeFontSizeOverride("font_size", 9);
+        header.AddChild(_cost);
+
+        _title = new Label
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            ClipText = true,
+            Position = new Vector2(14, 0),
+            Size = new Vector2(FootprintW - 16, 13),
+        };
+        _title.AddThemeColorOverride("font_color", StsTheme.Cream);
+        _title.AddThemeFontSizeOverride("font_size", 8);
+        header.AddChild(_title);
+
+        // Portrait — the actual card art. Most cards are visually
+        // distinguishable by art alone.
+        _portrait = new TextureRect
+        {
+            CustomMinimumSize = new Vector2(FootprintW - 4, 50),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+        };
+        var portraitWrap = new MarginContainer();
+        portraitWrap.AddThemeConstantOverride("margin_left", 2);
+        portraitWrap.AddThemeConstantOverride("margin_right", 2);
+        portraitWrap.AddChild(_portrait);
+        v.AddChild(portraitWrap);
+
+        // Type label (color-coded border + tag)
+        _typeLabel = new Label
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(0, 12),
+        };
+        _typeLabel.AddThemeColorOverride("font_color", StsTheme.Cream);
+        _typeLabel.AddThemeFontSizeOverride("font_size", 8);
+        v.AddChild(_typeLabel);
     }
 
     public void SetCard(CardModel card)
     {
-        if (_card != null && GodotObject.IsInstanceValid(_card)) _card.QueueFree();
-        _card = null;
-        if (_viewport == null) return;
+        if (_title == null || _cost == null || _portrait == null || _typeLabel == null) return;
 
+        _title.Text = card.Title ?? "?";
+
+        int cost = 0;
+        bool costsX = false;
         try
         {
-            var packed = ResourceLoader.Load<PackedScene>("res://scenes/cards/card.tscn");
-            if (packed == null)
-            {
-                GD.PrintErr("[VR][RemoteHands] card.tscn not loadable");
-                return;
-            }
-            var nc = packed.Instantiate<NCard>();
-            if (nc == null) return;
-
-            // Critical ordering — wrapper is already in the scene tree
-            // (RemoteHandsOverlay.UpdateStrip adds it before SetCard runs),
-            // so SubViewport is in tree, so adding NCard fires its _Ready
-            // and populates the field references it needs for rendering.
-            _viewport.AddChild(nc);
-
-            nc.Visibility = ModelVisibility.Visible;
-            nc.Model = card;
-            try
-            {
-                var owner = card.GetType().GetProperty("Owner")?.GetValue(card);
-                var creature = owner?.GetType().GetProperty("Creature")?.GetValue(owner);
-                nc.SetPreviewTarget(creature as MegaCrit.Sts2.Core.Entities.Creatures.Creature);
-            }
-            catch (Exception ex) { GD.Print($"[VR][RemoteHands] SetPreviewTarget: {ex.Message}"); }
-
-            try
-            {
-                nc.UpdateVisuals(MegaCrit.Sts2.Core.Entities.Cards.PileType.Hand,
-                                 MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode.Normal);
-            }
-            catch (Exception ex) { GD.Print($"[VR][RemoteHands] UpdateVisuals: {ex.Message}"); }
-
-            _card = nc;
+            var ec = card.EnergyCost;
+            if (ec != null) { cost = ec.GetResolved(); costsX = ec.CostsX; }
         }
-        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] card instantiation fail: {ex.Message}"); }
+        catch { }
+        _cost.Text = costsX ? "X" : cost.ToString();
+
+        try { _portrait.Texture = card.Portrait; } catch { _portrait.Texture = null; }
+
+        var (typeText, typeColor) = card.Type switch
+        {
+            CardType.Attack => ("攻击",  new Color("A4332C")),
+            CardType.Skill  => ("技能",  new Color("4F6FAA")),
+            CardType.Power  => ("能力",  new Color("4F8E5C")),
+            CardType.Status => ("状态",  new Color("8A7E62")),
+            CardType.Curse  => ("诅咒",  new Color("550B9E")),
+            CardType.Quest  => ("任务",  new Color("7E3E15")),
+            _               => ("",       new Color("4D4B40")),
+        };
+        _typeLabel.Text = typeText;
+
+        if (GetThemeStylebox("panel") is StyleBoxFlat sbf)
+        {
+            sbf.BorderColor = typeColor;
+            sbf.BorderWidthTop = 3;
+        }
     }
 }
