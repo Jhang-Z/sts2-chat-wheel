@@ -295,19 +295,20 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
     }
 }
 
-// Card view that uses the game's own NCard scene — gives us the full
-// in-game card visual (cost / art / name / type / description with
-// keyword highlights) at a smaller size. NCard's natural footprint is
-// roughly 180 × 270; we scale down via Control.Scale and reserve the
-// scaled footprint in our layout via CustomMinimumSize.
+// Card view that uses the game's own NCard scene rendered into a SubViewport,
+// then displayed in a TextureRect at our desired smaller size. This achieves
+// faithful card rendering (cost / art / name / type / description with
+// keyword highlights) at any scale — Control.Scale on NCard directly
+// doesn't work because NCard's anchor-stretched children ignore it.
 internal sealed partial class RemoteCardView : Control
 {
-    public const float ScaleFactor = 0.40f;
-    public const float NativeW = 180f;
-    public const float NativeH = 270f;
-    public const float FootprintW = NativeW * ScaleFactor;   // ≈72
-    public const float FootprintH = NativeH * ScaleFactor;   // ≈108
+    public const float FootprintW = 84f;
+    public const float FootprintH = 126f;
+    public const int   NativeW = 180;
+    public const int   NativeH = 270;
 
+    private SubViewport? _viewport;
+    private TextureRect? _display;
     private NCard? _card;
 
     public RemoteCardView()
@@ -315,28 +316,54 @@ internal sealed partial class RemoteCardView : Control
         CustomMinimumSize = new Vector2(FootprintW, FootprintH);
         MouseFilter = MouseFilterEnum.Ignore;
         ClipContents = false;
+        Build();
+    }
+
+    private void Build()
+    {
+        // Off-screen viewport — renders NCard at native resolution.
+        _viewport = new SubViewport
+        {
+            Size = new Vector2I(NativeW, NativeH),
+            TransparentBg = true,
+            RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
+            HandleInputLocally = false,
+        };
+        AddChild(_viewport);
+
+        // Display the viewport's render at our footprint size — automatic
+        // scaling. ViewportTexture stays live; updates as NCard repaints.
+        _display = new TextureRect
+        {
+            Texture = _viewport.GetTexture(),
+            CustomMinimumSize = new Vector2(FootprintW, FootprintH),
+            Size = new Vector2(FootprintW, FootprintH),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.Scale,
+            MouseFilter = MouseFilterEnum.Ignore,
+            // ViewportTextures often render flipped on Y in Godot 4 —
+            // FlipV here corrects that without affecting non-viewport textures.
+            FlipV = true,
+        };
+        AddChild(_display);
     }
 
     public void SetCard(CardModel card)
     {
-        // Discard any prior NCard before creating a new one — pool reuse is
-        // managed by NodePool internally.
         if (_card != null && GodotObject.IsInstanceValid(_card)) _card.QueueFree();
         _card = null;
+        if (_viewport == null) return;
 
         try
         {
             var nc = NCard.Create(card, ModelVisibility.Visible);
             if (nc == null) return;
-            AddChild(nc);
+            // Add to the SubViewport so the card is rendered off-screen at
+            // its native size, regardless of our footprint.
+            _viewport.AddChild(nc);
 
-            // NCardHolder.ReassignToCard sequence: Visibility → Model →
-            // SetPreviewTarget → UpdateVisuals. Create handled the first
-            // two; we must do the last two ourselves. Without
-            // SetPreviewTarget, the SmartFormat call inside
-            // GetDescriptionForPile fails to resolve dynamic variables
-            // ("Damage", "Block", etc.) and falls back to the literal
-            // "If you can read this, there is a bug." placeholder.
+            // Mirror NCardHolder.ReassignToCard ordering — Visibility +
+            // Model done by Create; SetPreviewTarget + UpdateVisuals here.
             try
             {
                 var owner = card.GetType().GetProperty("Owner")?.GetValue(card);
@@ -345,18 +372,15 @@ internal sealed partial class RemoteCardView : Control
             }
             catch (Exception ex) { GD.Print($"[VR][RemoteHands] SetPreviewTarget: {ex.Message}"); }
 
-            try { nc.UpdateVisuals(MegaCrit.Sts2.Core.Entities.Cards.PileType.Hand,
-                                   MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode.Normal); }
+            try
+            {
+                nc.UpdateVisuals(MegaCrit.Sts2.Core.Entities.Cards.PileType.Hand,
+                                 MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode.Normal);
+            }
             catch (Exception ex) { GD.Print($"[VR][RemoteHands] UpdateVisuals: {ex.Message}"); }
 
-            // Scaling deferred — Control.Scale doesn't shrink anchor-stretched
-            // children. Will revisit with SubViewport once content rendering
-            // is verified.
             _card = nc;
         }
         catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] NCard.Create fail: {ex.Message}"); }
     }
-
-    // Keep the older method name available so callers don't change.
-    public void Build() { /* no-op; layout reserved via CustomMinimumSize */ }
 }
