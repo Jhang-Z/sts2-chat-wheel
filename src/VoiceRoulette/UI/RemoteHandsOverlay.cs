@@ -355,9 +355,12 @@ internal sealed partial class RemoteCardView : Control
         {
             var nc = NCard.Create(card, ModelVisibility.Visible);
             if (nc == null) return;
-            // Add to the SubViewport so the card is rendered off-screen at
-            // its native size, regardless of our footprint.
-            _viewport.AddChild(nc);
+            // NodePool's prewarmed instances retain their pool-parent. Plain
+            // AddChild would throw because the node already has a parent;
+            // Reparent atomically removes from old + adds to new. Without
+            // this the cards stay in the pool's hidden parent and render at
+            // its position (top of screen) at native size.
+            nc.Reparent(_viewport);
 
             // Mirror NCardHolder.ReassignToCard ordering — Visibility +
             // Model done by Create; SetPreviewTarget + UpdateVisuals here.
