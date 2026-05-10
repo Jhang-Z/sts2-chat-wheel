@@ -229,7 +229,14 @@ public sealed partial class StatusPinger : Node
                 // for a deeper game-internal namespace just for this.
                 var typeName = ctrl.GetType().Name;
                 if (typeName == "NTopBarGold" && ctrl.GetGlobalRect().HasPoint(mousePos)) goldHit = ctrl;
-                else if (typeName == "NTopBarHp" && ctrl.GetGlobalRect().HasPoint(mousePos)) hpHit = ctrl;
+                else if (typeName == "NHealthBar" && ctrl.GetGlobalRect().HasPoint(mousePos))
+                {
+                    // Only fire on the LOCAL player's HP bar — NHealthBar
+                    // exists for every creature (enemies + teammates), and we
+                    // don't want to broadcast a teammate's HP as if it were
+                    // ours. Match by creature reference.
+                    if (IsLocalPlayerHealthBar(ctrl)) hpHit = ctrl;
+                }
                 else if (typeName == "NEnergyCounter" && ctrl.GetGlobalRect().HasPoint(mousePos)) energyHit = ctrl;
                 else if (typeName == "NTopBarDeckButton" && ctrl.GetGlobalRect().HasPoint(mousePos)) deckHit = ctrl;
                 else if (typeName == "NDrawPileButton" && ctrl.GetGlobalRect().HasPoint(mousePos)) drawHit = ctrl;
@@ -263,10 +270,8 @@ public sealed partial class StatusPinger : Node
         current = 0; max = 0; block = 0;
         try
         {
-            var playerField = hp.GetType().GetField("_player", PrivInst);
-            var player = playerField?.GetValue(hp);
-            var creatureProp = player?.GetType().GetProperty("Creature");
-            var creature = creatureProp?.GetValue(player);
+            // NHealthBar has _creature directly. Read HP/Block off it.
+            var creature = hp.GetType().GetField("_creature", PrivInst)?.GetValue(hp);
             if (creature == null) return false;
             var ct = creature.GetType();
             var cur = ct.GetProperty("CurrentHp")?.GetValue(creature);
@@ -278,6 +283,39 @@ public sealed partial class StatusPinger : Node
             return true;
         }
         catch (Exception ex) { GD.Print($"[VR][Pinger] hp read fail: {ex.Message}"); }
+        return false;
+    }
+
+    private static bool IsLocalPlayerHealthBar(Control hb)
+    {
+        try
+        {
+            var creature = hb.GetType().GetField("_creature", PrivInst)?.GetValue(hb);
+            if (creature == null) return false;
+            // Quick reject: enemies have an in-combat health bar but we never
+            // want to broadcast enemy HP as "我血量".
+            var isEnemy = creature.GetType().GetProperty("IsEnemy")?.GetValue(creature);
+            if (isEnemy is bool e && e) return false;
+
+            // Match against local player's Creature.
+            var rmType = Type.GetType("MegaCrit.Sts2.Core.Runs.RunManager, sts2");
+            var rm = rmType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var ns = rm?.GetType().GetProperty("NetService")?.GetValue(rm);
+            if (ns?.GetType().GetProperty("NetId")?.GetValue(ns) is not ulong localNetId) return false;
+
+            var stateProp = rmType!.GetProperty("State", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var state = stateProp?.GetValue(rm);
+            if (state?.GetType().GetProperty("Players")?.GetValue(state) is not System.Collections.IEnumerable players)
+                return false;
+            foreach (var p in players)
+            {
+                if (p == null) continue;
+                if (p.GetType().GetProperty("NetId")?.GetValue(p) is not ulong pid || pid != localNetId) continue;
+                var localCreature = p.GetType().GetProperty("Creature")?.GetValue(p);
+                return ReferenceEquals(localCreature, creature);
+            }
+        }
+        catch (Exception ex) { GD.Print($"[VR][Pinger] IsLocalPlayerHealthBar: {ex.Message}"); }
         return false;
     }
 
