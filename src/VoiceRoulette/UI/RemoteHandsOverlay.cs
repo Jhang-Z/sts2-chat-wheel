@@ -328,11 +328,18 @@ internal sealed partial class RemoteCardView : Control
         {
             var nc = NCard.Create(card, ModelVisibility.Visible);
             if (nc == null) return;
-            // Scale around the top-left corner so the visible card fills our
-            // reserved footprint.
-            nc.PivotOffset = Vector2.Zero;
-            nc.Scale = new Vector2(ScaleFactor, ScaleFactor);
             AddChild(nc);
+            // CRITICAL: NCard.set_Model only does Reload() (textures/borders),
+            // which is also a no-op while the node isn't IsNodeReady. The
+            // title and description text are populated by UpdateVisuals →
+            // UpdateTitleLabel, normally called by NHandCardHolder.UpdateCard.
+            // Outside that pipeline we must call it ourselves AFTER AddChild.
+            try { nc.UpdateVisuals(MegaCrit.Sts2.Core.Entities.Cards.PileType.Hand,
+                                   MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode.Normal); }
+            catch (Exception ex) { GD.Print($"[VR][RemoteHands] UpdateVisuals: {ex.Message}"); }
+            // Scaling deferred — Control.Scale doesn't shrink anchor-stretched
+            // children. Will revisit with SubViewport once content rendering
+            // is verified.
             _card = nc;
         }
         catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] NCard.Create fail: {ex.Message}"); }
