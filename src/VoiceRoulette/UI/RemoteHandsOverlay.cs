@@ -298,17 +298,17 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
     }
 }
 
-// Card view: instantiates the game's card.tscn fresh, adds to scene tree
-// (which fires _Ready and populates internal field refs), then runs the
-// full NCardHolder.ReassignToCard bind sequence. Cards display at native
-// ~180×270 — no scaling. Larger than ideal but content is correct
-// (real titles, real descriptions with keyword highlights).
+// Card view: instantiates card.tscn, adds to tree (so _Ready runs and
+// fields populate), runs the bind sequence, then applies Control.Scale.
+// NCard's true native size is 300×422 (not 180×270 — read from
+// NCard.cctor IL). With ScaleFactor 0.187 we get a clean ~56×78 visual.
 internal sealed partial class RemoteCardView : Control
 {
-    // Reserve approximate native footprint so HBoxContainer lays cards
-    // out side-by-side without overlap.
-    public const float FootprintW = 180f;
-    public const float FootprintH = 270f;
+    public const int   NativeW = 300;
+    public const int   NativeH = 422;
+    public const float ScaleFactor = 0.187f;
+    public const float FootprintW = NativeW * ScaleFactor;   // ~56
+    public const float FootprintH = NativeH * ScaleFactor;   // ~79
 
     private NCard? _card;
 
@@ -316,6 +316,9 @@ internal sealed partial class RemoteCardView : Control
     {
         CustomMinimumSize = new Vector2(FootprintW, FootprintH);
         MouseFilter = MouseFilterEnum.Ignore;
+        // No ClipContents — with the correct scale the visual fits inside
+        // our footprint naturally. ClipContents was hiding parts because
+        // we previously used the wrong native dimensions.
         ClipContents = false;
     }
 
@@ -335,13 +338,16 @@ internal sealed partial class RemoteCardView : Control
             var nc = packed.Instantiate<NCard>();
             if (nc == null) return;
 
-            // Wrapper is already in the tree (RemoteHandsOverlay.UpdateStrip
-            // adds it before SetCard runs). Adding NCard now fires its
-            // _Ready, populating the field refs needed for rendering.
-            AddChild(nc);
+            AddChild(nc);   // _Ready fires here (wrapper already in tree)
 
-            // Mirror NCardHolder.ReassignToCard: Visibility → Model →
-            // SetPreviewTarget → UpdateVisuals.
+            // Apply scale BEFORE binding model — we want the bind sequence
+            // to operate on a stably-sized control. PivotOffset=(0,0)
+            // anchors the scale at the top-left so the visible bounds
+            // align with our footprint.
+            nc.PivotOffset = Vector2.Zero;
+            nc.Scale = new Vector2(ScaleFactor, ScaleFactor);
+
+            // Mirror NCardHolder.ReassignToCard ordering.
             nc.Visibility = ModelVisibility.Visible;
             nc.Model = card;
             try
