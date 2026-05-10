@@ -29,7 +29,7 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
     private const float CardWidth = 56f;
     private const float CardHeight = 78f;
     private const float CardSpacing = 3f;
-    private const float StripGapFromPortrait = 12f;
+    private const float StripGapFromPortrait = 6f;
     private const double RefreshIntervalSec = 0.25;
 
     private SceneTree? _tree;
@@ -87,12 +87,26 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
         {
             if (st.PortraitNode == null || !GodotObject.IsInstanceValid(st.PortraitNode))
                 continue;
-            var pRect = st.PortraitNode.GetGlobalRect();
-            // Anchor: right of portrait, vertically centered with it.
-            var x = pRect.Position.X + pRect.Size.X + StripGapFromPortrait;
-            var y = pRect.Position.Y + pRect.Size.Y * 0.5f - CardHeight * 0.5f;
+            // Anchor to the HP bar inside the player widget, not the widget
+            // itself — the widget extends well past the visible HP bar with
+            // empty right padding, leaving an unwanted gap.
+            var anchorRect = TryGetHealthBarRect(st.PortraitNode) ?? st.PortraitNode.GetGlobalRect();
+            var x = anchorRect.Position.X + anchorRect.Size.X + StripGapFromPortrait;
+            var y = anchorRect.Position.Y + anchorRect.Size.Y * 0.5f - CardHeight * 0.5f;
             st.Container.Position = new Vector2(x, y);
         }
+    }
+
+    private static Rect2? TryGetHealthBarRect(NMultiplayerPlayerState widget)
+    {
+        try
+        {
+            var hb = widget.GetType().GetField("_healthBar",
+                BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(widget) as Control;
+            if (hb != null && GodotObject.IsInstanceValid(hb)) return hb.GetGlobalRect();
+        }
+        catch { }
+        return null;
     }
 
     private void Refresh()
@@ -122,7 +136,9 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
                 nid = v;
             }
             catch { continue; }
-            if (localId is ulong me && nid == me) continue;
+            // Note: local player INTENTIONALLY included for visual testing.
+            // Toggle this back to skip-self when satisfied with layout:
+            //   if (localId is ulong me && nid == me) continue;
             seenNetIds.Add(nid);
 
             var pcs = ReadObj(player, "PlayerCombatState");
