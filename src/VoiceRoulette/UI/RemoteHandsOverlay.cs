@@ -1,59 +1,65 @@
 // Live overlay showing each remote (teammate) player's current hand of
-// cards at the top of the screen during combat. Rendered using the game's
-// own NCard.Create(cardModel, ModelVisibility.Visible) factory so the
-// cards look identical to the local player's hand at the bottom.
+// cards next to their player-portrait widget on the left side of the
+// screen during combat. Each card is a custom-rendered mini-card built
+// directly from CardModel data (cost / type / portrait / title) — we
+// deliberately avoid NCard.Create because NCard goes through a NodePool
+// that's tightly coupled to the game's own hand-display lifecycle, so
+// rendering multiple cards from the same pool outside the game's
+// expected use causes broken descriptions ("If you can read this, there
+// is a bug.") for all but the first card.
 //
-// Implementation notes:
-//   • Polls every 250ms — fast enough to feel real-time, light enough to
-//     not matter. We compare hand-card identity hashes per player to
-//     decide whether to rebuild that player's row.
-//   • Skips the local player (we see our own hand below).
-//   • Hides itself when there's no active combat / no remote players.
-//   • Cards scaled to ~0.35× of their natural size so 5+ cards fit
-//     comfortably across the screen for each teammate.
+// Layout: each remote player's strip is anchored to the right edge of
+// their NMultiplayerPlayerState widget. Updated every frame so the
+// strip follows the portrait as the player-state container animates.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Godot;
-using MegaCrit.Sts2.Core.Entities.UI;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
-using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Nodes.Multiplayer;
 
 namespace VoiceRoulette.UI;
 
 public sealed partial class RemoteHandsOverlay : CanvasLayer
 {
-    private const int LayerIndex = 90;       // above game world, below modals
-    private const float CardScale = 0.35f;
-    private const float CardSpacing = 6f;
-    private const float RowSpacing = 8f;
-    private const int   TopMarginPx = 60;    // sit below the top bar
+    private const int LayerIndex = 90;
+    private const float CardWidth = 78f;
+    private const float CardHeight = 110f;
+    private const float CardSpacing = 4f;
+    private const float StripGapFromPortrait = 12f;
     private const double RefreshIntervalSec = 0.25;
 
     private SceneTree? _tree;
     private Control? _root;
-    private VBoxContainer? _rows;
     private double _nextRefreshSec;
     private ulong? _localNetIdCache;
 
-    // Per-remote-player state — lets us only rebuild that player's row when
-    // their hand has actually changed. Key = NetId.
-    private sealed class PlayerRowState
+    private sealed class PlayerStrip
     {
-        public HBoxContainer Row = null!;
-        public Label NameLabel = null!;
-        public HBoxContainer CardStrip = null!;
-        public string LastHandFingerprint = "";
+        public Control Container = null!;             // anchored next to the player widget
+        public HBoxContainer CardRow = null!;
+        public NMultiplayerPlayerState? PortraitNode; // tracked widget
+        public ulong NetId;
+        public string LastFingerprint = "";
+        // Per-card view nodes for animation (subtle bob).
+        public List<RemoteCardView> Views = new();
     }
-    private readonly Dictionary<ulong, PlayerRowState> _rowsByNetId = new();
+
+    private readonly Dictionary<ulong, PlayerStrip> _strips = new();
 
     public void Start()
     {
         _tree = (SceneTree)Engine.GetMainLoop();
         Layer = LayerIndex;
-        BuildShell();
+        _root = new Control
+        {
+            AnchorLeft = 0, AnchorTop = 0, AnchorRight = 1, AnchorBottom = 1,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        AddChild(_root);
         _tree.ProcessFrame += OnTick;
         GD.Print("[VR][RemoteHands] started");
     }
@@ -63,36 +69,30 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
         if (_tree != null) _tree.ProcessFrame -= OnTick;
     }
 
-    private void BuildShell()
-    {
-        _root = new Control
-        {
-            AnchorLeft = 0, AnchorTop = 0, AnchorRight = 1, AnchorBottom = 0,
-            OffsetLeft = 0, OffsetTop = TopMarginPx,
-            OffsetRight = 0, OffsetBottom = 240,  // generous; rows pack inside
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        AddChild(_root);
-
-        _rows = new VBoxContainer
-        {
-            AnchorLeft = 0.5f, AnchorTop = 0,
-            AnchorRight = 0.5f, AnchorBottom = 0,
-            GrowHorizontal = Control.GrowDirection.Both,
-            GrowVertical = Control.GrowDirection.End,
-        };
-        _rows.AddThemeConstantOverride("separation", (int)RowSpacing);
-        _root.AddChild(_rows);
-        _root.Visible = false;
-    }
-
     private void OnTick()
     {
+        // Position update every frame so cards follow portrait animations.
+        UpdateStripPositions();
+
         var nowSec = Time.GetTicksMsec() / 1000.0;
         if (nowSec < _nextRefreshSec) return;
         _nextRefreshSec = nowSec + RefreshIntervalSec;
-        try { Refresh(); }
-        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] refresh: {ex.Message}"); }
+        try { Refresh(); } catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] refresh: {ex.Message}"); }
+    }
+
+    private void UpdateStripPositions()
+    {
+        if (_root == null) return;
+        foreach (var st in _strips.Values)
+        {
+            if (st.PortraitNode == null || !GodotObject.IsInstanceValid(st.PortraitNode))
+                continue;
+            var pRect = st.PortraitNode.GetGlobalRect();
+            // Anchor: right of portrait, vertically centered with it.
+            var x = pRect.Position.X + pRect.Size.X + StripGapFromPortrait;
+            var y = pRect.Position.Y + pRect.Size.Y * 0.5f - CardHeight * 0.5f;
+            st.Container.Position = new Vector2(x, y);
+        }
     }
 
     private void Refresh()
@@ -104,11 +104,13 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
             return;
         }
 
-        // Resolve local NetId once per session — used to skip self.
         _localNetIdCache ??= TryGetLocalNetId();
         var localId = _localNetIdCache;
 
-        // Build the set of remote NetIds visible this tick.
+        // Index portraits by Player.NetId so we can pair each remote player's
+        // hand with its on-screen widget.
+        var portraitByNetId = IndexPortraitsByNetId();
+
         var seenNetIds = new HashSet<ulong>();
         foreach (var player in players)
         {
@@ -120,11 +122,11 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
                 nid = v;
             }
             catch { continue; }
-            if (localId is ulong me && nid == me) continue;  // skip self
+            if (localId is ulong me && nid == me) continue;
             seenNetIds.Add(nid);
 
             var pcs = ReadObj(player, "PlayerCombatState");
-            if (pcs is null) continue;  // not in combat / no combat state yet
+            if (pcs is null) continue;
             var hand = ReadObj(pcs, "Hand");
             if (hand is null) continue;
             if (ReadObj(hand, "Cards") is not System.Collections.IEnumerable cardsEnum) continue;
@@ -132,141 +134,75 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
             var cards = new List<CardModel>();
             foreach (var c in cardsEnum) if (c is CardModel cm) cards.Add(cm);
 
-            UpdatePlayerRow(nid, player, cards);
+            UpdateStrip(nid, cards, portraitByNetId);
         }
 
-        // Drop rows for players no longer present (left game / dead / etc).
-        var stale = _rowsByNetId.Keys.Where(k => !seenNetIds.Contains(k)).ToList();
-        foreach (var k in stale)
-        {
-            if (_rowsByNetId.TryGetValue(k, out var st))
-            {
-                if (GodotObject.IsInstanceValid(st.Row)) st.Row.QueueFree();
-                _rowsByNetId.Remove(k);
-            }
-        }
-
-        // Show/hide root depending on whether we have any remote rows.
-        if (_root != null) _root.Visible = _rowsByNetId.Count > 0;
+        // Drop strips for players no longer present.
+        var stale = _strips.Keys.Where(k => !seenNetIds.Contains(k)).ToList();
+        foreach (var k in stale) RemoveStrip(k);
     }
 
     private void HideAll()
     {
-        if (_root != null) _root.Visible = false;
-        // Keep the row state so we don't churn when combat resumes — but
-        // free them if combat genuinely ended (no players at all).
-        // Cheap heuristic: just leave them; Refresh's prune step handles it.
+        foreach (var k in _strips.Keys.ToList()) RemoveStrip(k);
     }
 
-    private void UpdatePlayerRow(ulong netId, object player, List<CardModel> cards)
+    private void RemoveStrip(ulong netId)
     {
-        var fingerprint = FingerprintHand(cards);
+        if (!_strips.TryGetValue(netId, out var st)) return;
+        if (GodotObject.IsInstanceValid(st.Container)) st.Container.QueueFree();
+        _strips.Remove(netId);
+    }
 
-        if (!_rowsByNetId.TryGetValue(netId, out var st))
+    private void UpdateStrip(ulong netId, List<CardModel> cards, Dictionary<ulong, NMultiplayerPlayerState> portraitByNetId)
+    {
+        if (!_strips.TryGetValue(netId, out var st))
         {
-            // First time seeing this player — build their row.
-            var row = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
-            row.AddThemeConstantOverride("separation", 12);
-
-            var name = new Label { CustomMinimumSize = new Vector2(120, 0) };
-            name.AddThemeColorOverride("font_color", StsTheme.Cream);
-            name.AddThemeFontSizeOverride("font_size", StsTheme.FontBody);
-            name.HorizontalAlignment = HorizontalAlignment.Right;
-
-            var strip = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Begin };
-            strip.AddThemeConstantOverride("separation", (int)CardSpacing);
-
-            row.AddChild(name);
-            row.AddChild(strip);
-            _rows!.AddChild(row);
-
-            st = new PlayerRowState { Row = row, NameLabel = name, CardStrip = strip };
-            _rowsByNetId[netId] = st;
+            st = new PlayerStrip { NetId = netId };
+            st.Container = new Control { MouseFilter = Control.MouseFilterEnum.Ignore };
+            st.CardRow = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+            st.CardRow.AddThemeConstantOverride("separation", (int)CardSpacing);
+            st.Container.AddChild(st.CardRow);
+            _root!.AddChild(st.Container);
+            _strips[netId] = st;
         }
 
-        // Update player name (could change in some edge case; cheap to refresh).
-        st.NameLabel.Text = ResolvePlayerDisplayName(netId, player) + "：";
+        portraitByNetId.TryGetValue(netId, out var portrait);
+        st.PortraitNode = portrait;
+        // Hide the strip until we have a portrait to anchor against.
+        st.Container.Visible = portrait != null;
 
-        // Skip card-strip rebuild if hand hasn't changed.
-        if (st.LastHandFingerprint == fingerprint) return;
-        st.LastHandFingerprint = fingerprint;
+        var fingerprint = FingerprintHand(cards);
+        if (st.LastFingerprint == fingerprint) return;
+        st.LastFingerprint = fingerprint;
 
-        // Rebuild the card strip from scratch — simpler than diffing and
-        // hands are small (≤10 cards typically).
-        foreach (var child in st.CardStrip.GetChildren())
-            child.QueueFree();
+        // Rebuild card row from scratch — cheap; hands are small.
+        foreach (var child in st.CardRow.GetChildren()) child.QueueFree();
+        st.Views.Clear();
 
         foreach (var card in cards)
         {
             try
             {
-                // Render an isolated CLONE of the CardModel — NCard appears to
-                // bind one-to-one with its CardModel for description rendering,
-                // so showing the same canonical instance twice (e.g. 3× Strike)
-                // results in only the first NCard rendering correctly; the
-                // others fall back to "If you can read this, there is a bug."
-                // Deep-cloning via the game's own ToSerializable/FromSerializable
-                // round-trip gives each NCard its own independent model.
-                var renderModel = TryDeepCloneCardModel(card) ?? card;
-
-                var nc = NCard.Create(renderModel, ModelVisibility.Visible);
-                if (nc == null) continue;
-                nc.Scale = new Vector2(CardScale, CardScale);
-                var wrap = new Control
-                {
-                    CustomMinimumSize = new Vector2(180 * CardScale, 270 * CardScale),
-                    MouseFilter = Control.MouseFilterEnum.Ignore,
-                };
-                wrap.AddChild(nc);
-                st.CardStrip.AddChild(wrap);
+                var view = new RemoteCardView();
+                view.SetCard(card);
+                st.CardRow.AddChild(view);
+                st.Views.Add(view);
             }
-            catch (Exception ex)
-            {
-                GD.PrintErr($"[VR][RemoteHands] NCard.Create failed: {ex.Message}");
-            }
+            catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] card view fail: {ex.Message}"); }
         }
     }
 
-    private static CardModel? TryDeepCloneCardModel(CardModel src)
-    {
-        try
-        {
-            var t = src.GetType();
-            // Prefer ToSerializable + FromSerializable for the strongest
-            // independence — same path the game uses to load cards from save.
-            var toSer = t.GetMethod("ToSerializable", BindingFlags.Public | BindingFlags.Instance);
-            var ser = toSer?.Invoke(src, null);
-            if (ser != null)
-            {
-                var fromSer = t.GetMethod("FromSerializable", BindingFlags.Public | BindingFlags.Static);
-                var copy = fromSer?.Invoke(null, new[] { ser });
-                if (copy is CardModel cm) return cm;
-            }
-        }
-        catch (Exception ex) { GD.Print($"[VR][RemoteHands] deep clone (ser) failed: {ex.Message}"); }
-
-        try
-        {
-            // Fallback: CreateClone — runs the in-game clone path, which
-            // sets CloneOf and can fail outside an active run, but is worth
-            // a try.
-            var createClone = src.GetType().GetMethod("CreateClone", BindingFlags.Public | BindingFlags.Instance);
-            if (createClone?.Invoke(src, null) is CardModel cm) return cm;
-        }
-        catch (Exception ex) { GD.Print($"[VR][RemoteHands] CreateClone failed: {ex.Message}"); }
-
-        return null;
-    }
-
-    // ── helpers ───────────────────────────────────────────────────────────
+    // ── helpers ──────────────────────────────────────────────────────────
 
     private static string FingerprintHand(List<CardModel> cards)
     {
-        // Identity = ID list joined. CardModel doesn't have a stable Id property
-        // in our probe but its hash codes will differ across replays — for our
-        // change-detection use case, hash codes are plenty.
-        var sb = new System.Text.StringBuilder(cards.Count * 12);
-        foreach (var c in cards) sb.Append(c.GetHashCode()).Append('|');
+        var sb = new System.Text.StringBuilder(cards.Count * 16);
+        foreach (var c in cards)
+        {
+            // Use Title as the identity key plus instance hash for upgrades/dupes.
+            sb.Append(c.Title).Append(':').Append(c.GetHashCode()).Append('|');
+        }
         return sb.ToString();
     }
 
@@ -295,38 +231,187 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
         return null;
     }
 
-    private static string ResolvePlayerDisplayName(ulong netId, object playerObj)
+    private Dictionary<ulong, NMultiplayerPlayerState> IndexPortraitsByNetId()
     {
-        // Try Player.Name first; fall back to platform-resolved name; then NetId.
+        var dict = new Dictionary<ulong, NMultiplayerPlayerState>();
         try
         {
-            if (playerObj.GetType().GetProperty("Name")?.GetValue(playerObj) is string n && !string.IsNullOrWhiteSpace(n))
-                return n;
+            Walk(_tree!.Root);
         }
-        catch { }
-        try
+        catch (Exception ex) { GD.Print($"[VR][RemoteHands] portrait scan: {ex.Message}"); }
+        return dict;
+
+        void Walk(Node n)
         {
-            var puType = Type.GetType("MegaCrit.Sts2.Core.Platform.PlatformUtil, sts2");
-            var getName = puType?.GetMethod("GetPlayerName", BindingFlags.Public | BindingFlags.Static);
-            // GetPlayerName(PlatformType, ulong)
-            if (getName != null)
+            if (n is NMultiplayerPlayerState state)
             {
-                var platTypeT = Type.GetType("MegaCrit.Sts2.Core.Platform.PlatformType, sts2");
-                if (platTypeT != null)
+                var player = state.Player;
+                if (player != null)
                 {
-                    var steam = Enum.Parse(platTypeT, "Steam");
-                    var name = getName.Invoke(null, new object?[] { steam, netId }) as string;
-                    if (!string.IsNullOrWhiteSpace(name)) return name!;
+                    try
+                    {
+                        if (player.GetType().GetProperty("NetId")?.GetValue(player) is ulong nid)
+                            dict[nid] = state;
+                    }
+                    catch { }
                 }
             }
+            foreach (var c in n.GetChildren()) Walk(c);
         }
-        catch { }
-        return $"P{netId & 0xFFFF}";
     }
 
     private static object? ReadObj(object obj, string propName)
     {
         try { return obj.GetType().GetProperty(propName)?.GetValue(obj); }
         catch { return null; }
+    }
+}
+
+// Custom mini-card panel — extracts data straight from CardModel without
+// NCard's NodePool entanglements. Sized at CardWidth × CardHeight and
+// styled by card type.
+internal sealed partial class RemoteCardView : PanelContainer
+{
+    private const float CardW = 78f;
+    private const float CardH = 110f;
+
+    private TextureRect? _portrait;
+    private Label? _title;
+    private Label? _cost;
+    private Label? _typeLabel;
+
+    public RemoteCardView()
+    {
+        CustomMinimumSize = new Vector2(CardW, CardH);
+        MouseFilter = Control.MouseFilterEnum.Ignore;
+        Build();
+    }
+
+    private void Build()
+    {
+        // Outer frame — neutral dark with thin border. Type-specific
+        // tinting goes on the title bar to keep portraits readable.
+        var sb = new StyleBoxFlat
+        {
+            BgColor = new Color("1B1612"),
+            BorderColor = new Color("4D4B40"),
+            BorderWidthLeft = 2, BorderWidthRight = 2,
+            BorderWidthTop = 2, BorderWidthBottom = 2,
+            CornerRadiusBottomLeft = 4, CornerRadiusBottomRight = 4,
+            CornerRadiusTopLeft = 4, CornerRadiusTopRight = 4,
+            ContentMarginLeft = 0, ContentMarginRight = 0,
+            ContentMarginTop = 0, ContentMarginBottom = 0,
+        };
+        AddThemeStyleboxOverride("panel", sb);
+
+        var v = new VBoxContainer
+        {
+            AnchorLeft = 0, AnchorTop = 0, AnchorRight = 1, AnchorBottom = 1,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        v.AddThemeConstantOverride("separation", 0);
+        AddChild(v);
+
+        // ── Header: cost orb (left) + title (right) ─────────────────────
+        var header = new Control { CustomMinimumSize = new Vector2(0, 22) };
+        v.AddChild(header);
+
+        _cost = new Label
+        {
+            Text = "?",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(22, 22),
+            Position = new Vector2(2, 0),
+        };
+        _cost.AddThemeColorOverride("font_color", new Color("FFFFFF"));
+        _cost.AddThemeColorOverride("font_outline_color", new Color("000000"));
+        _cost.AddThemeConstantOverride("outline_size", 4);
+        _cost.AddThemeFontSizeOverride("font_size", 14);
+        header.AddChild(_cost);
+
+        _title = new Label
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            ClipText = true,
+            Position = new Vector2(24, 0),
+            Size = new Vector2(CardW - 26, 22),
+        };
+        _title.AddThemeColorOverride("font_color", StsTheme.Cream);
+        _title.AddThemeFontSizeOverride("font_size", 11);
+        header.AddChild(_title);
+
+        // ── Portrait ────────────────────────────────────────────────────
+        _portrait = new TextureRect
+        {
+            CustomMinimumSize = new Vector2(CardW - 6, 60),
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+        };
+        var portraitWrap = new MarginContainer();
+        portraitWrap.AddThemeConstantOverride("margin_left", 3);
+        portraitWrap.AddThemeConstantOverride("margin_right", 3);
+        portraitWrap.AddChild(_portrait);
+        v.AddChild(portraitWrap);
+
+        // ── Type label (color-coded banner) ─────────────────────────────
+        _typeLabel = new Label
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(0, 18),
+        };
+        _typeLabel.AddThemeColorOverride("font_color", StsTheme.Cream);
+        _typeLabel.AddThemeFontSizeOverride("font_size", 11);
+        v.AddChild(_typeLabel);
+    }
+
+    public void SetCard(CardModel card)
+    {
+        if (_title == null || _cost == null || _portrait == null || _typeLabel == null) return;
+
+        _title.Text = card.Title ?? "?";
+
+        // Cost: prefer resolved (current) value, fall back to canonical.
+        int cost = 0;
+        bool costsX = false;
+        try
+        {
+            var ec = card.EnergyCost;
+            if (ec != null)
+            {
+                cost = ec.GetResolved();
+                costsX = ec.CostsX;
+            }
+        }
+        catch { }
+        _cost.Text = costsX ? "X" : cost.ToString();
+
+        // Portrait — Texture2D directly off CardModel.
+        try { _portrait.Texture = card.Portrait; }
+        catch { _portrait.Texture = null; }
+
+        // Type label + colored panel border based on type.
+        var (typeText, typeColor) = card.Type switch
+        {
+            CardType.Attack => ("攻击",  new Color("A4332C")),  // red
+            CardType.Skill  => ("技能",  new Color("4F6FAA")),  // blue
+            CardType.Power  => ("能力",  new Color("4F8E5C")),  // green
+            CardType.Status => ("状态",  new Color("8A7E62")),  // gray
+            CardType.Curse  => ("诅咒",  new Color("550B9E")),  // purple
+            CardType.Quest  => ("任务",  new Color("7E3E15")),  // brown
+            _               => ("",       new Color("4D4B40")),
+        };
+        _typeLabel.Text = typeText;
+
+        // Re-tint the panel border to match card type.
+        var existingSb = GetThemeStylebox("panel");
+        if (existingSb is StyleBoxFlat sbf)
+        {
+            sbf.BorderColor = typeColor;
+            // Top-only thicker border to act as a banner accent.
+            sbf.BorderWidthTop = 3;
+        }
     }
 }
