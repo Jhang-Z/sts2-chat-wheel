@@ -154,13 +154,7 @@ public sealed partial class StatusPinger : Node
 
         Walk(root);
 
-        // Priority order. Local player HP bar comes BEFORE enemy because
-        // the player and enemy stand close together and an enemy's hitbox
-        // often extends downward over the in-combat HP bar — without this
-        // re-ordering, clicking your own HP bar would frequently fire the
-        // "都打这一只" enemy mark instead.
-        if (hpHit != null && TryReadHp(hpHit, out var cur, out var max, out var blk))
-            return new HitResult { Kind = HitKind.Hp, IntValue = cur, IntValue2 = max, BlockValue = blk };
+        // Priority: enemy > combat-area items > top-bar/UI buttons.
         if (bestEnemyNode != null)
         {
             var pos = bestEnemyNode.GlobalPosition;
@@ -173,6 +167,8 @@ public sealed partial class StatusPinger : Node
 
         if (goldHit != null && TryReadGold(goldHit, out var gold))
             return new HitResult { Kind = HitKind.Gold, IntValue = gold };
+        if (hpHit != null && TryReadHp(hpHit, out var cur, out var max, out var blk))
+            return new HitResult { Kind = HitKind.Hp, IntValue = cur, IntValue2 = max, BlockValue = blk };
         if (energyHit != null && TryReadEnergy(energyHit, out var ce, out var me))
             return new HitResult { Kind = HitKind.Energy, IntValue = ce, IntValue2 = me };
         if (deckHit != null && TryReadDeckCount(deckHit, out var dc))
@@ -294,6 +290,16 @@ public sealed partial class StatusPinger : Node
     {
         try
         {
+            // Reject the small HP bar inside the side-of-screen player
+            // widget (NMultiplayerPlayerState). User wants HP click to
+            // target only the WIDE in-combat HP bar under their character.
+            // The two NHealthBars share the same _creature reference, so
+            // we have to differentiate by ancestor.
+            for (var p = hb.GetParent(); p != null; p = p.GetParent())
+            {
+                if (p.GetType().Name == "NMultiplayerPlayerState") return false;
+            }
+
             var creature = hb.GetType().GetField("_creature", PrivInst)?.GetValue(hb);
             if (creature == null) return false;
             // Quick reject: enemies have an in-combat health bar but we never
