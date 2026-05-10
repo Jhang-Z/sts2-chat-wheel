@@ -43,12 +43,11 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
 
     private sealed class PlayerStrip
     {
-        public Control Container = null!;             // anchored next to the player widget
+        public Control Container = null!;
         public HBoxContainer CardRow = null!;
-        public NMultiplayerPlayerState? PortraitNode; // tracked widget
+        public NMultiplayerPlayerState? PortraitNode;
         public ulong NetId;
         public string LastFingerprint = "";
-        // Per-card view nodes for animation (subtle bob).
         public List<RemoteCardView> Views = new();
     }
 
@@ -87,19 +86,31 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
     private void UpdateStripPositions()
     {
         if (_root == null) return;
-        foreach (var st in _strips.Values)
+
+        // Layout strategy C: horizontally CENTER each strip, stack strips
+        // vertically from top down with enough margin to clear the top HUD.
+        var viewportSize = _tree?.Root?.GetVisibleRect().Size ?? new Vector2(1920, 1080);
+        const float TopMargin = 130f;       // clear the top HUD bar (deck/gear/etc)
+        const float VerticalGap = 6f;
+
+        // Stable order: sort strips by NetId so they don't reshuffle each
+        // refresh as the dictionary's enumeration order changes.
+        var ordered = _strips.Values
+            .Where(s => s.PortraitNode != null && GodotObject.IsInstanceValid(s.PortraitNode))
+            .OrderBy(s => s.NetId)
+            .ToList();
+
+        for (var i = 0; i < ordered.Count; i++)
         {
-            if (st.PortraitNode == null || !GodotObject.IsInstanceValid(st.PortraitNode))
-                continue;
-            // Anchor to the HP bar's BOTTOM rather than centered. The
-            // top-most player's HP bar sits right below the relics row,
-            // so vertically-centered strips would extend upward into the
-            // relics. Bottom-aligned avoids this and stays clear of the
-            // next player's portrait below (HP bars are spaced > strip
-            // height apart in practice).
-            var anchorRect = TryGetHealthBarRect(st.PortraitNode) ?? st.PortraitNode.GetGlobalRect();
-            var x = anchorRect.Position.X + anchorRect.Size.X + StripGapFromPortrait;
-            var y = anchorRect.Position.Y + anchorRect.Size.Y - CardHeight * 0.5f;
+            var st = ordered[i];
+            // Strip width = label + gap + num cards × (cardW + spacing).
+            var n = st.Views.Count;
+            if (n <= 0) { st.Container.Visible = false; continue; }
+            st.Container.Visible = true;
+            var stripWidth = n * (CardWidth + CardSpacing) - CardSpacing;
+
+            var x = (viewportSize.X - stripWidth) * 0.5f;
+            var y = TopMargin + i * (CardHeight + VerticalGap);
             st.Container.Position = new Vector2(x, y);
         }
     }
@@ -198,8 +209,6 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
 
         portraitByNetId.TryGetValue(netId, out var portrait);
         st.PortraitNode = portrait;
-        // Hide the strip until we have a portrait to anchor against (only
-        // multiplayer mode has NMultiplayerPlayerState widgets).
         st.Container.Visible = portrait != null;
 
         var fingerprint = FingerprintHand(cards);
@@ -310,9 +319,9 @@ internal sealed partial class RemoteCardView : Control
 {
     public const int   NativeW = 300;
     public const int   NativeH = 422;
-    public const float ScaleFactor = 0.187f;
-    public const float FootprintW = NativeW * ScaleFactor;   // ~56
-    public const float FootprintH = NativeH * ScaleFactor;   // ~79
+    public const float ScaleFactor = 0.24f;
+    public const float FootprintW = NativeW * ScaleFactor;   // 72
+    public const float FootprintH = NativeH * ScaleFactor;   // ~101
 
     private NCard? _card;
 
