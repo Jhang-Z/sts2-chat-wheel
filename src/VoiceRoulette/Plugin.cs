@@ -65,6 +65,7 @@ public static class Plugin
             var audio = new AudioPlayer(tts);
             var bubble = new BubbleOverlay();
             var marker = new MarkerOverlay();
+            var remoteHands = new RemoteHandsOverlay();
             var settings = new SettingsScreen();
             var pinger = new StatusPinger();
             var analyzer = new HandAnalyzer();
@@ -155,6 +156,7 @@ public static class Plugin
                     sceneRoot.AddChild(input);
                     sceneRoot.AddChild(bubble);
                     sceneRoot.AddChild(marker);
+                    sceneRoot.AddChild(remoteHands);
                     sceneRoot.AddChild(settings);
                     sceneRoot.AddChild(pinger);
                     sceneRoot.AddChild(analyzer);
@@ -210,6 +212,7 @@ public static class Plugin
                     analyzer.Start(getLocalSlot(), sendPing);
                     threat.Start(sendPing);
                     marker.Start();
+                    remoteHands.Start();
                     slPrompt.Start();
                     slPrompt.OnConfirmClicked = () => slCoordinator.AcceptLocally();
                     slPrompt.OnVetoClicked    = () => slCoordinator.VetoLocally();
