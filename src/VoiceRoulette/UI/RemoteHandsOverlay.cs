@@ -353,17 +353,25 @@ internal sealed partial class RemoteCardView : Control
 
         try
         {
-            var nc = NCard.Create(card, ModelVisibility.Visible);
+            // Bypass NodePool: instantiate card.tscn fresh. Each NCard is
+            // a clean instance whose _Ready fires the moment we add it to
+            // our SubViewport. This avoids the pool's stale parent / stale
+            // model state issues entirely.
+            var packed = ResourceLoader.Load<PackedScene>("res://scenes/cards/card.tscn");
+            if (packed == null)
+            {
+                GD.PrintErr("[VR][RemoteHands] card.tscn not loadable");
+                return;
+            }
+            var nc = packed.Instantiate<NCard>();
             if (nc == null) return;
-            // NodePool's prewarmed instances retain their pool-parent. Plain
-            // AddChild would throw because the node already has a parent;
-            // Reparent atomically removes from old + adds to new. Without
-            // this the cards stay in the pool's hidden parent and render at
-            // its position (top of screen) at native size.
-            nc.Reparent(_viewport);
 
-            // Mirror NCardHolder.ReassignToCard ordering — Visibility +
-            // Model done by Create; SetPreviewTarget + UpdateVisuals here.
+            _viewport.AddChild(nc);   // _Ready fires here (fresh instance)
+
+            // Now go through the full bind sequence in the same order
+            // NCardHolder.ReassignToCard uses.
+            nc.Visibility = ModelVisibility.Visible;
+            nc.Model = card;
             try
             {
                 var owner = card.GetType().GetProperty("Owner")?.GetValue(card);
@@ -381,6 +389,6 @@ internal sealed partial class RemoteCardView : Control
 
             _card = nc;
         }
-        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] NCard.Create fail: {ex.Message}"); }
+        catch (Exception ex) { GD.PrintErr($"[VR][RemoteHands] card instantiation fail: {ex.Message}"); }
     }
 }
