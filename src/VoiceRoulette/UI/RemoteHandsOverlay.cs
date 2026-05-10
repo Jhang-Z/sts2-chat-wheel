@@ -91,11 +91,15 @@ public sealed partial class RemoteHandsOverlay : CanvasLayer
         {
             if (st.PortraitNode == null || !GodotObject.IsInstanceValid(st.PortraitNode))
                 continue;
-            // Anchor to the HP bar inside the player widget — the widget's
-            // own right edge has empty padding that leaves a gap.
+            // Anchor to the HP bar's BOTTOM rather than centered. The
+            // top-most player's HP bar sits right below the relics row,
+            // so vertically-centered strips would extend upward into the
+            // relics. Bottom-aligned avoids this and stays clear of the
+            // next player's portrait below (HP bars are spaced > strip
+            // height apart in practice).
             var anchorRect = TryGetHealthBarRect(st.PortraitNode) ?? st.PortraitNode.GetGlobalRect();
             var x = anchorRect.Position.X + anchorRect.Size.X + StripGapFromPortrait;
-            var y = anchorRect.Position.Y + anchorRect.Size.Y * 0.5f - CardHeight * 0.5f;
+            var y = anchorRect.Position.Y + anchorRect.Size.Y - CardHeight * 0.5f;
             st.Container.Position = new Vector2(x, y);
         }
     }
