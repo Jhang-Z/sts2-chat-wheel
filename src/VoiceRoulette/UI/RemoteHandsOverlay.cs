@@ -329,14 +329,26 @@ internal sealed partial class RemoteCardView : Control
             var nc = NCard.Create(card, ModelVisibility.Visible);
             if (nc == null) return;
             AddChild(nc);
-            // CRITICAL: NCard.set_Model only does Reload() (textures/borders),
-            // which is also a no-op while the node isn't IsNodeReady. The
-            // title and description text are populated by UpdateVisuals →
-            // UpdateTitleLabel, normally called by NHandCardHolder.UpdateCard.
-            // Outside that pipeline we must call it ourselves AFTER AddChild.
+
+            // NCardHolder.ReassignToCard sequence: Visibility → Model →
+            // SetPreviewTarget → UpdateVisuals. Create handled the first
+            // two; we must do the last two ourselves. Without
+            // SetPreviewTarget, the SmartFormat call inside
+            // GetDescriptionForPile fails to resolve dynamic variables
+            // ("Damage", "Block", etc.) and falls back to the literal
+            // "If you can read this, there is a bug." placeholder.
+            try
+            {
+                var owner = card.GetType().GetProperty("Owner")?.GetValue(card);
+                var creature = owner?.GetType().GetProperty("Creature")?.GetValue(owner);
+                nc.SetPreviewTarget(creature as MegaCrit.Sts2.Core.Entities.Creatures.Creature);
+            }
+            catch (Exception ex) { GD.Print($"[VR][RemoteHands] SetPreviewTarget: {ex.Message}"); }
+
             try { nc.UpdateVisuals(MegaCrit.Sts2.Core.Entities.Cards.PileType.Hand,
                                    MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode.Normal); }
             catch (Exception ex) { GD.Print($"[VR][RemoteHands] UpdateVisuals: {ex.Message}"); }
+
             // Scaling deferred — Control.Scale doesn't shrink anchor-stretched
             // children. Will revisit with SubViewport once content rendering
             // is verified.
