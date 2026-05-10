@@ -341,9 +341,6 @@ internal sealed partial class RemoteCardView : Control
             ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
             StretchMode = TextureRect.StretchModeEnum.Scale,
             MouseFilter = MouseFilterEnum.Ignore,
-            // ViewportTextures often render flipped on Y in Godot 4 —
-            // FlipV here corrects that without affecting non-viewport textures.
-            FlipV = true,
         };
         AddChild(_display);
     }
