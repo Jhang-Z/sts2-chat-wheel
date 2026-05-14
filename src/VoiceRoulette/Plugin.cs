@@ -212,11 +212,7 @@ public static class Plugin
                     analyzer.Start(getLocalSlot(), sendPing);
                     threat.Start(sendPing);
                     marker.Start();
-                    // RemoteHandsOverlay disabled — full-size NCard rendering
-                    // was suspected of obscuring the screen on Win clients
-                    // ("black screen in multiplayer"). Re-enable once we have
-                    // a scalable card view that doesn't block the game.
-                    // remoteHands.Start();
+                    remoteHands.Start();
                     slPrompt.Start();
                     slPrompt.OnConfirmClicked = () => slCoordinator.AcceptLocally();
                     slPrompt.OnVetoClicked    = () => slCoordinator.VetoLocally();
