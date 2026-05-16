@@ -17,8 +17,10 @@ public sealed partial class SLPromptOverlay : CanvasLayer
     private Control? _root;
     private PanelContainer? _panel;
     private Label? _title;
+    private Label? _proposerLabel;
     private Label? _hint;
     private Label? _countdown;
+    private Label? _votersLabel;
     private Button? _confirmBtn;
     private Button? _vetoBtn;
 
@@ -73,11 +75,20 @@ public sealed partial class SLPromptOverlay : CanvasLayer
         _title.AddThemeFontSizeOverride("font_size", StsTheme.FontH1);
         v.AddChild(_title);
 
+        _proposerLabel = new Label
+        {
+            Text = "",
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        _proposerLabel.AddThemeColorOverride("font_color", StsTheme.MenuTextDim);
+        _proposerLabel.AddThemeFontSizeOverride("font_size", StsTheme.FontCaption);
+        v.AddChild(_proposerLabel);
+
         v.AddChild(new HSeparator { CustomMinimumSize = new Vector2(0, 8) });
 
         _hint = new Label
         {
-            Text = "[Enter] 同意    [Esc] 反对    自动同意倒计时",
+            Text = "[立即执行 SL] 同意    [取消] 反对",
             HorizontalAlignment = HorizontalAlignment.Center,
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
         };
@@ -87,12 +98,22 @@ public sealed partial class SLPromptOverlay : CanvasLayer
 
         _countdown = new Label
         {
-            Text = "10.0",
+            Text = "已确认 0 / 0",
             HorizontalAlignment = HorizontalAlignment.Center,
         };
         _countdown.AddThemeColorOverride("font_color", StsTheme.Gold);
         _countdown.AddThemeFontSizeOverride("font_size", StsTheme.FontH2);
         v.AddChild(_countdown);
+
+        _votersLabel = new Label
+        {
+            Text = "",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
+        };
+        _votersLabel.AddThemeColorOverride("font_color", StsTheme.MenuTextDim);
+        _votersLabel.AddThemeFontSizeOverride("font_size", StsTheme.FontCaption);
+        v.AddChild(_votersLabel);
 
         v.AddChild(new HSeparator { CustomMinimumSize = new Vector2(0, 8) });
 
@@ -137,28 +158,34 @@ public sealed partial class SLPromptOverlay : CanvasLayer
 
     /// <summary>
     /// Show the vote prompt with a live "X / N" accept counter.
-    /// `byMe` controls the wording: proposer sees a softer message,
-    /// non-proposer sees an active vote-call message.
     /// </summary>
-    public void Show(bool byMe, int expectedPeerCount, int alreadyAccepted)
+    public void Show(bool byMe, string proposerName, int expectedPeerCount,
+                     System.Collections.Generic.IReadOnlyList<string> acceptedNames)
     {
         if (_root == null || _title == null) Start();
         if (_title != null)
             _title.Text = byMe
                 ? "已发起 SL — 等待队友确认"
                 : "队友请求 SL — 请确认";
+        if (_proposerLabel != null)
+            _proposerLabel.Text = $"发起人:{proposerName}";
         if (_hint != null)
             _hint.Text = "[立即执行 SL] 同意    [取消] 反对";
-        SetCounter(alreadyAccepted, expectedPeerCount);
+        SetTally(expectedPeerCount, acceptedNames);
         if (_root != null) _root.Visible = true;
     }
 
-    /// <summary>Update the "X / N" tally label.</summary>
-    public void SetCounter(int accepted, int total)
+    /// <summary>Update the count + list of who's voted.</summary>
+    public void SetTally(int total,
+                         System.Collections.Generic.IReadOnlyList<string> acceptedNames)
     {
         if (_countdown == null) Start();
         if (_countdown != null)
-            _countdown.Text = $"已确认 {accepted} / {total}";
+            _countdown.Text = $"已确认 {acceptedNames.Count} / {total}";
+        if (_votersLabel != null)
+            _votersLabel.Text = acceptedNames.Count == 0
+                ? "(暂无人投票)"
+                : "已投票:" + string.Join("、", acceptedNames);
     }
 
     public new void Hide()

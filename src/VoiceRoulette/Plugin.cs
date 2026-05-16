@@ -73,7 +73,7 @@ public static class Plugin
             var markerInput = new VoiceRoulette.Input.MarkerInput();
             var slCoordinator = new SLCoordinator();
             var slPrompt = new SLPromptOverlay();
-            var slInput = new VoiceRoulette.Input.SLInput();
+            var slTrigger = new SLTriggerButton();
             INetSync net = new AdaptiveNetSync();
             GD.Print($"[VR] NetSync = {net.GetType().Name}");
 
@@ -164,7 +164,7 @@ public static class Plugin
                     sceneRoot.AddChild(markerInput);
                     sceneRoot.AddChild(slCoordinator);
                     sceneRoot.AddChild(slPrompt);
-                    sceneRoot.AddChild(slInput);
+                    sceneRoot.AddChild(slTrigger);
                     GD.Print($"[VR] nodes attached.");
 
                     wheel.Initialize(modDir: ModDir);
@@ -218,13 +218,8 @@ public static class Plugin
                     slPrompt.OnVetoClicked    = () => slCoordinator.VetoLocally();
                     slCoordinator.AttachUi(slPrompt);
                     slCoordinator.Start();
-                    var slKey = ParseKey(config.Schema.SLHotkey, Key.R);
-                    slInput.Start(
-                        hotkey: slKey,
-                        onTrigger: () => slCoordinator.RequestSLLocally(),
-                        onAccept:  () => slCoordinator.AcceptLocally(),
-                        onVeto:    () => slCoordinator.VetoLocally(),
-                        isPromptActive: () => slCoordinator.IsPromptActive);
+                    slTrigger.Start();
+                    slTrigger.OnPressed = () => slCoordinator.RequestSLLocally();
 
                     // MarkerInput's standalone polling is no longer started —
                     // StatusPinger handles enemy clicks now via the unified

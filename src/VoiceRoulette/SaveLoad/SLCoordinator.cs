@@ -53,9 +53,11 @@ public sealed partial class SLCoordinator : Node
     private sealed class ActiveProposal
     {
         public ulong ProposerId;
+        public string ProposerName = "未知";
         public ulong Timestamp;
         public double DeadlineSec;
         public HashSet<ulong> Accepted = new();
+        public List<string> AcceptedNames = new();
         public int ExpectedPeerCount;
     }
 
@@ -140,7 +142,10 @@ public sealed partial class SLCoordinator : Node
 
         // Mark self accepted locally (idempotent).
         if (_active.Accepted.Add(localId))
+        {
+            _active.AcceptedNames.Add(ResolvePlayerName(localId));
             UpdateUiCounter();
+        }
 
         if (ns != null)
         {
@@ -163,6 +168,7 @@ public sealed partial class SLCoordinator : Node
         _active = new ActiveProposal
         {
             ProposerId = proposerId,
+            ProposerName = ResolvePlayerName(proposerId),
             Timestamp = timestamp,
             DeadlineSec = nowSec + VoteTimeoutSec,
             ExpectedPeerCount = Math.Max(1, peerCount),
@@ -171,13 +177,13 @@ public sealed partial class SLCoordinator : Node
         // explicitly click Confirm. Counter starts at 0/N for everyone.
         var localId = TryGetNetService()?.NetId ?? 0UL;
         var byMe = isLocalProposer || proposerId == localId;
-        _ui?.Show(byMe, _active.ExpectedPeerCount, _active.Accepted.Count);
+        _ui?.Show(byMe, _active.ProposerName, _active.ExpectedPeerCount, _active.AcceptedNames);
     }
 
     private void UpdateUiCounter()
     {
         if (_active == null || _ui == null) return;
-        _ui.SetCounter(_active.Accepted.Count, _active.ExpectedPeerCount);
+        _ui.SetTally(_active.ExpectedPeerCount, _active.AcceptedNames);
     }
 
     private void CheckAllAccepted()
@@ -283,6 +289,49 @@ public sealed partial class SLCoordinator : Node
     }
 
     /// <summary>
+    /// Look up a player's display name (the nameplate on their multiplayer
+    /// portrait widget) by NetId. Falls back to a "玩家 X" formatted ID
+    /// when the portrait isn't in the tree yet.
+    /// </summary>
+    private static string ResolvePlayerName(ulong netId)
+    {
+        if (netId == 0) return "我";
+        try
+        {
+            var tree = (SceneTree)Engine.GetMainLoop();
+            return WalkForName(tree.Root) ?? $"玩家 {netId & 0xFFFF}";
+
+            string? WalkForName(Node n)
+            {
+                if (n.GetType().Name == "NMultiplayerPlayerState")
+                {
+                    try
+                    {
+                        var playerProp = n.GetType().GetProperty("Player");
+                        var player = playerProp?.GetValue(n);
+                        var pid = player?.GetType().GetProperty("NetId")?.GetValue(player);
+                        if (pid is ulong matched && matched == netId)
+                        {
+                            var nl = n.GetType().GetField("_nameplateLabel",
+                                BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(n);
+                            var text = nl?.GetType().GetProperty("Text")?.GetValue(nl) as string;
+                            if (!string.IsNullOrWhiteSpace(text)) return text;
+                        }
+                    }
+                    catch { }
+                }
+                foreach (var c in n.GetChildren())
+                {
+                    var hit = WalkForName(c);
+                    if (hit != null) return hit;
+                }
+                return null;
+            }
+        }
+        catch { return $"玩家 {netId & 0xFFFF}"; }
+    }
+
+    /// <summary>
     /// Total peer count for vote tally. Pulled from RunState.Players, which
     /// is mirrored on every peer (host and clients).
     /// </summary>
@@ -372,6 +421,7 @@ public sealed partial class SLCoordinator : Node
         }
         if (_active.Accepted.Add(msg.VoterId))
         {
+            _active.AcceptedNames.Add(ResolvePlayerName(msg.VoterId));
             GD.Print($"[VR][SL] +1 accept from {msg.VoterId} (now {_active.Accepted.Count}/{_active.ExpectedPeerCount})");
             UpdateUiCounter();
             CheckAllAccepted();
