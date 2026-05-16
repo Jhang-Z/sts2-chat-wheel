@@ -289,13 +289,34 @@ public sealed partial class SLCoordinator : Node
     }
 
     /// <summary>
-    /// Look up a player's display name (the nameplate on their multiplayer
-    /// portrait widget) by NetId. Falls back to a "玩家 X" formatted ID
-    /// when the portrait isn't in the tree yet.
+    /// Look up a player's display name. Tries (in order):
+    ///   1. PlatformUtil.GetPlayerName(Steam, netId) — Steam display name.
+    ///   2. NMultiplayerPlayerState._nameplateLabel — already-rendered name.
+    ///   3. Fall back to "玩家 X" with NetId tail.
     /// </summary>
     private static string ResolvePlayerName(ulong netId)
     {
         if (netId == 0) return "我";
+        // Steam display name — works as soon as Steam is connected, doesn't
+        // depend on whether the multiplayer portrait widget is in tree yet.
+        try
+        {
+            var puType = Type.GetType("MegaCrit.Sts2.Core.Platform.PlatformUtil, sts2");
+            var getName = puType?.GetMethod("GetPlayerName",
+                BindingFlags.Public | BindingFlags.Static);
+            if (getName != null)
+            {
+                var ptType = Type.GetType("MegaCrit.Sts2.Core.Platform.PlatformType, sts2");
+                if (ptType != null)
+                {
+                    var steam = Enum.Parse(ptType, "Steam");
+                    var name = getName.Invoke(null, new object?[] { steam, netId }) as string;
+                    if (!string.IsNullOrWhiteSpace(name)) return name;
+                }
+            }
+        }
+        catch { }
+        // Fallback: scan scene tree for the matching player widget.
         try
         {
             var tree = (SceneTree)Engine.GetMainLoop();
